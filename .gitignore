@@ -1,2 +1,5 @@
 *.db3
 metadata.yaml
+dataset/msgs/build/
+dataset/msgs/install/
+dataset/msgs/log/
