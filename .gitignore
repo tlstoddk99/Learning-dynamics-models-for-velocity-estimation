@@ -3,3 +3,7 @@ metadata.yaml
 dataset/msgs/build/
 dataset/msgs/install/
 dataset/msgs/log/
+*.cpython-38.pyc
+__pycache__/
+wandb/
+*.pt
