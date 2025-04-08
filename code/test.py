@@ -1,5 +1,5 @@
 from copy import deepcopy
-from distutils import config
+# from distutils import config
 import os
 import pickle
 import torch
@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import wandb
 import time
+import seaborn as sns
 
 import torchdiffeq as ode
 import matplotlib.pyplot as plt
@@ -46,7 +47,7 @@ torch.set_grad_enabled(False)
 
 
 model_dict = {
-    # 'model': '<wandb_path>',
+    'model': '/home/a/Learning-dynamics-models-for-velocity-estimation/code/trained_models/ukf_2025_04_04_13_19_08',
 }
 
 pred_model_name = model_dict['model']
@@ -61,11 +62,13 @@ print(f"R: {torch.diag(R[0])}")
 print(f"P: {torch.diag(P[0])}")
 
 
+
+
 device = torch.device(args.common_device)
 state_weights = torch.tensor(args.ukf_states_weights, device=device)
 
 loss_fn = torch.nn.MSELoss(reduction="none")
-dataset_path = Path("opti_test/hoons_all_test.csv")
+dataset_path = Path("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_test.csv")
 
 test_dataset = OptitrackDatasetSequential(
     csv_file=dataset_path,
@@ -149,16 +152,16 @@ loss_list = torch.cat(loss_list, dim=1).sum(dim=-1)
 print(f"MSE all: {loss_list.mean()}")
 np.save("pred_ukf_obs_sp.npy", loss_list.cpu().numpy())
 
-for col in errors_df.columns:
-    # print mse
-    mse = (errors_df[col]**2).mean() * state_weights[col]
-    print(f'MSE {col}: {mse:.6f}')
+# for col in errors_df.columns:
+#     # print mse
+#     mse = (errors_df[col]**2).mean() * state_weights[col]
+#     print(f'MSE {col}: {mse:.6f}')
 
-print(f'{errors_df.describe()}')
+# print(f'{errors_df.describe()}')
 
-print(f'Error  mean: {error.mean():.6f}')
-print(f'Error  median: {error.median():.6f}')
-print(f'99 precentile: {error.quantile(0.99):.6f}')
+# print(f'Error  mean: {error.mean():.6f}')
+# print(f'Error  median: {error.median():.6f}')
+# print(f'99 precentile: {error.quantile(0.99):.6f}')
 
 time = df['time'].values
 t_data = time
@@ -171,6 +174,7 @@ for col in df.columns:
         df[col] = np.sqrt(df[col])
 
 plt.figure()
+plt.subplot(2, 1, 1)
 plt.plot(t_data, df['vx_ukf'].values, label="vx est")
 plt.plot(t_data, df['vx_gt'].values, label="vx")
 plt.fill_between(
@@ -180,6 +184,11 @@ plt.fill_between(
     alpha=0.5,
 )
 plt.legend()
+
+plt.subplot(2, 1, 2)
+plt.plot(t_data, df['vx_e'].values, label="vx_e")
+plt.legend()
+
 
 
 plt.figure()
@@ -196,9 +205,11 @@ plt.legend()
 
 plt.subplot(2, 1, 2)
 plt.plot(t_data, df['vy_e'].values, label="vy_e")
+plt.legend()
 
 
 plt.figure()
+plt.subplot(2, 1, 1)
 plt.plot(t_data, df['r_ukf'].values, label="r est")
 plt.plot(t_data, df['r_gt'].values, label="r")
 plt.fill_between(
@@ -207,6 +218,10 @@ plt.fill_between(
     df['r_ukf'].values + df['P_r'].values * confidence,
     alpha=0.5,
 )
+plt.legend()
+
+plt.subplot(2, 1, 2)
+plt.plot(t_data, df['r_e'].values, label="r_e")
 plt.legend()
 
 plt.figure()
@@ -220,4 +235,56 @@ plt.fill_between(
 )
 plt.legend()
 
+# plt.show()
+
+
+
+# -----------------------------------------------------------------------------
+# 1. Overall Error Distribution: Histogram with KDE and summary statistics
+# -----------------------------------------------------------------------------
+plt.figure(figsize=(10, 6))
+sns.histplot(error, bins=50, kde=True, color='skyblue')
+plt.axvline(error.mean(), color='red', linestyle='--', label=f'Mean: {error.mean():.3f}')
+plt.axvline(error.median(), color='green', linestyle='--', label=f'Median: {error.median():.3f}')
+plt.axvline(error.quantile(0.99), color='orange', linestyle='--', label=f'99th Percentile: {error.quantile(0.99):.3f}')
+plt.title('Distribution of Overall Error', fontsize=16)
+plt.xlabel('Error Value', fontsize=14)
+plt.ylabel('Frequency', fontsize=14)
+plt.legend()
+plt.tight_layout()
+# plt.show()
+
+# -----------------------------------------------------------------------------
+# 2. MSE for Each State Variable: Bar chart with annotated values
+# -----------------------------------------------------------------------------
+mse_dict = {}
+for col in errors_df.columns:
+    mse = (errors_df[col]**2).mean() * state_weights[col]
+    mse_dict[col] = mse
+    print(f'MSE {col}: {mse:.6f}')
+
+plt.figure(figsize=(8, 5))
+ax = sns.barplot(x=list(mse_dict.keys()),
+                 y=list(mse_dict.values()),
+                 hue=list(mse_dict.keys()),
+                 dodge=False,
+                 palette="viridis")
+
+plt.title('MSE for Each State Variable (Weighted)', fontsize=16)
+plt.xlabel('State Variable', fontsize=14)
+plt.ylabel('MSE Value', fontsize=14)
+# Annotate each bar with its exact MSE value
+for i, v in enumerate(mse_dict.values()):
+    ax.text(i, v , f"{v:.6f}", color='black', ha='center', fontsize=12)
+plt.tight_layout()
+# plt.show()
+
+
+
+plt.figure(figsize=(10, 6))
+sns.boxplot(data=errors_df, palette="Set2")
+plt.title("Box Plot of Errors for Each Variable", fontsize=16)
+plt.xlabel("State Variables", fontsize=14)
+plt.ylabel("Error Value", fontsize=14)
+plt.tight_layout()
 plt.show()

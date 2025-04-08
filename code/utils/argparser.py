@@ -25,7 +25,7 @@ def get_parser():
     parser.add_argument("--common_precision", type=int, default=32,
                         help="Precision (default: 32)", choices=[32, 64])
 
-    parser.add_argument("--common_dataset_path", type=str, default="opti_test/hoons_all_train_and_val.csv",
+    parser.add_argument("--common_dataset_path", type=str, default="code/opti_test/hoons_all_train_and_val.csv",
                         help="Dataset path")
 
     parser.add_argument("--common_test_run_id", nargs='+', type=int,
@@ -167,6 +167,6 @@ if __name__ == "__main__":
     config_dict = vars(args)
 
     for key, value in config_dict.items():
-        # print(f"{key}: {value}")
-        if 'ukf' in key:
-            print(f"UKF in key: {key} and value: {value}")
+        print(f"{key}: {value}")
+        # if 'ukf' in key:
+        #     print(f"UKF in key: {key} and value: {value}")

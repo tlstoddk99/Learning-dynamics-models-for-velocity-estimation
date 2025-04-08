@@ -16,7 +16,7 @@ def get_wandb_model(model_name):
     if not model_path.exists():
         run = wandb.init()
         artifact = run.use_artifact(
-            f'f1tenth/ukf_all_in_one/{model_name}', type='model')
+            f'ukf_all_in_one/{model_name}', type='model')
         artifact_dir = artifact.download()
         run.finish()
 
@@ -38,7 +38,7 @@ def get_wandb_model(model_name):
 
     print(f"model path: {model_list}")
     noise_model_path = model_path / model_list[-1]
-    model_path = model_path / model_list[-2]
+    model_path = model_path / model_list[-17]
 
     model_dict = torch.load(model_path)
     noise_model_dict = torch.load(noise_model_path)

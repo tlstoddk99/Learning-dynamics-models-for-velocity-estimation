@@ -1,5 +1,5 @@
 from copy import deepcopy
-from distutils import config
+# from distutils import config
 import os
 import pickle
 import torch
@@ -190,7 +190,7 @@ def main():
         print("Using 32 bit precision")
         torch.set_default_dtype(torch.float32)
 
-    # Base model
+    # # Base model
     try:
         find_model(args, "base")
     except FileNotFoundError:
