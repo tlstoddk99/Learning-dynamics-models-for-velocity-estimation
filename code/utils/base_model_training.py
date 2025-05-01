@@ -27,7 +27,7 @@ from utils.state_wrapper import STATE_DEF_LIST
 from utils.argparser import get_parser
 
 from utils.trained_model_finder import find_model
-from datasets.dataset_getter import get_loaders, get_sequence_loaders
+from datasets.dataset_getter import get_loaders, get_sequence_loaders, get_model_sequence_loaders
 from utils.solver_settings import get_solver_settings, get_ode_solve_method
 import json
 
@@ -64,7 +64,8 @@ def train_base_model(args):
     model, fit_parameters = create_base_model(args)
 
     ode_solve = get_ode_solve_method(args, model, fit_parameters)
-    train_loader, test_loader, train_dset, test_dset = get_loaders(args, mode)
+    # train_loader, test_loader, train_dset, test_dset = get_loaders(args, mode)
+    train_loader, test_loader, train_dset, test_dset = get_model_sequence_loaders(args, mode)
 
     optimizer = getattr(torch.optim, args.base_optimizer)(fit_parameters,
                                                           lr=args.base_lr,

@@ -190,12 +190,16 @@ def main():
         print("Using 32 bit precision")
         torch.set_default_dtype(torch.float32)
 
-    # # Base model
-    try:
-        find_model(args, "base")
-    except FileNotFoundError:
-        print("Training base model")
-        train_base_model(args)
+    # # # Base model
+    # try:
+    #     find_model(args, "base")
+    # except FileNotFoundError:
+    #     print("Training base model")
+    #     train_base_model(args)
+    
+    print("Training base model")
+    train_base_model(args)
+    
 
     # Residual model pretraining
     if args.res_enable != 0:
