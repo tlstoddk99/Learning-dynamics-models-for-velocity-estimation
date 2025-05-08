@@ -61,9 +61,6 @@ print(f"Q: {torch.diag(Q[0])}")
 print(f"R: {torch.diag(R[0])}")
 print(f"P: {torch.diag(P[0])}")
 
-
-
-
 device = torch.device(args.common_device)
 state_weights = torch.tensor(args.ukf_states_weights, device=device)
 
@@ -86,6 +83,8 @@ test_dataset = OptitrackDatasetSequential(
 test_data_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=args.ukf_batch_size, shuffle=False, num_workers=args.common_loader_workers
 )
+print(f"test dataset shape: {test_dataset.batches.shape}")
+print(f"batch size: {args.ukf_batch_size}")
 
 state_dim = 5
 control_dim = 2
@@ -109,13 +108,30 @@ loss_list = []
 
 def calc_loss(x, args, test=False):
     X0 = x[:, 0, :state_dim]
-    # print(f"X0: {X0}")
+    
     # X0[:, -1] = 0.4
     u = x[:, :, state_dim: state_dim + control_dim]
     imu = x[:, :, -3:]
     wheel_speed = x[:, :, 3].unsqueeze(-1)
     y = torch.cat((imu, wheel_speed), dim=-1)
+    # print(f"X0: {X0}")
+    print(f"X0 shape: {X0.shape}")
+    # print(f"u: {u}")
+    print(f"u shape: {u.shape}")
+    # print(f"y: {y}")
+    print(f"y shape: {y.shape}")
+    
     X_ukf, P, q_entropy, r_entropy = ukf_stepper(X0, u, y)
+    # print(f"X_ukf: {X_ukf}")
+    print(f"X_ukf shape: {X_ukf.shape}")
+    # print(f"P: {P}")
+    print(f"P shape: {P.shape}")
+    print(f"q_entropy: {q_entropy}")
+    print(f"r_entropy: {r_entropy}")
+    # print(f"q_entropy shape: {q_entropy.shape}")
+    # print(f"r_entropy shape: {r_entropy.shape}")
+   
+    
 
     e = X_ukf[:, :, :state_dim] - x[:, :, :state_dim]
     print(f"e: {e.abs().sum()}")
@@ -131,6 +147,7 @@ test_loss = 0.0
 with torch.no_grad():
     df = None
     for x in test_data_loader:
+        print(f"test x: {x.shape}")
         loss, q_entropy, r_entropy, X_ukf, x, P = calc_loss(x, args, test=True)
         test_loss += loss.item()
         if df is None:
