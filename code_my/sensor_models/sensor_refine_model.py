@@ -14,6 +14,7 @@ class CausalConv1d(nn.Conv1d):
     """
     1D causal convolution with automatic left‐padding and optional weight norm.
     Inherits from nn.Conv1d for simplicity.
+    [B, L, C]
     """
     def __init__(
         self,
@@ -57,6 +58,7 @@ class TemporalBlock(nn.Module):
     ):
         super().__init__()
         layers = []
+        self.original_in_ch = in_ch
         for _ in range(2):
             layers.append(CausalConv1d(in_ch, out_ch, kernel_size, dilation))
             layers.append(activation())
@@ -65,8 +67,8 @@ class TemporalBlock(nn.Module):
         self.net = nn.Sequential(*layers)
         # 1×1 downsampling if channels differ
         self.downsample = (
-            nn.Conv1d(in_ch, out_ch, 1)
-            if in_ch != out_ch else None
+            nn.Conv1d(self.original_in_ch, out_ch, 1)
+            if self.original_in_ch != out_ch else None
         )
         if self.downsample:
             self.downsample.apply(_init_weights)

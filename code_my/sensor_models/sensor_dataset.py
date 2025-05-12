@@ -69,8 +69,11 @@ class SensorDataset(torch.utils.data.Dataset):
         return self.batches.shape[0]
 
     def __getitem__(self, idx):
-        return self.batches[idx]
-
+        # """[B,L,C]"""
+        # return self.batches[idx]
+        # """[B,C,L]"""
+        return self.batches[idx].permute(1,0)
+        
     def plot(self):
         self.data.plot(
             subplots=True, figsize=(10, 10), grid=True, title="Raw data", sharex=True
@@ -103,9 +106,11 @@ class SensorDataset(torch.utils.data.Dataset):
                     dtype=self.dtype,
                     device=self.device,
                 )
+
                 batches.append(batch)
 
         self.batches = torch.stack(batches)
+        
 
 
     def generate_gt(self):
