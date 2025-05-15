@@ -27,13 +27,14 @@ def parse_args():
 
 def build_model(input_size: int, output_size: int, args) -> torch.nn.Module:
     model = TCNGaussian(
-        input_size=input_size,
-        output_size=output_size,
+        input_size=4,
+        output_size=4,
         num_channels=256,
         num_levels=4,
         kernel_size=2,
         dropout=0.2,
-        activation=torch.nn.ReLU,
+        # activation=torch.nn.ReLU,
+        activation=torch.nn.SiLU,
         eps=1e-3
     )
     return model.to(args.device)

@@ -34,7 +34,7 @@ test_dataset = SensorDataset(
     device=device,
     dataset_scaler=1.0,
     # sequence_length=args.ukf_sequence_length,
-    sequence_length=100,
+    sequence_length=200,
 )
 test_data_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=1, shuffle=False
@@ -45,13 +45,14 @@ print(f"test dataloader shape: {test_dataset.batches.shape}")
 
 #create the model
 model = TCNGaussian(
-    input_size=4,
+     input_size=4,
     output_size=4,
-    num_channels=64,
+    num_channels=256,
     num_levels=4,
     kernel_size=2,
     dropout=0.2,
-    activation=torch.nn.ReLU,
+    # activation=torch.nn.ReLU,
+    activation=torch.nn.SiLU,
     eps=1e-3
 )
 model.to(device)
@@ -59,18 +60,12 @@ model.to(device)
 
 
 # Load the model state dict
-model_state_dict = torch.load('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-12_16-04/best_epoch_2797_loss_2.0435.pt')
+model_state_dict = torch.load('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-12_19-37/best_epoch_2384_loss_1.6559.pt')
 
 model.load_state_dict(model_state_dict)
 model.eval()
 
-
-
-# errors = []
-# predictions = []
-# targets = []
-# uncertainties = []
-
+count = 0
 results = []
 infer_times = []
 
@@ -97,12 +92,12 @@ with torch.no_grad():
         results.append({
             'prediction': mu,
             'target': targets,
-            'error': mu - targets,
+            'error': (mu - targets),
             'uncertainty': uncertainty,
         })
-        
-        infer_times.append(time1 - time0)
-        
+        if count >2:
+            infer_times.append(time1 - time0)
+        count += 1
 
 #plot the results
 #[ax,ay,r,wheel_speed]
@@ -128,7 +123,7 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
     ax.set_ylabel(metric)
 
     ax.plot(times, preds, label='prediction')
-    ax.plot(times, targs, label='target')
+    ax.plot(times, targs, alpha=0.8 ,label='target')
     ax.fill_between(
         times,
         [p - u for p, u in zip(preds, uncs)],
@@ -137,9 +132,32 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
         label='uncertainty'
     )
     ax.legend()
+    ax.grid()
+    
+fig, axs_2 = plt.subplots(2, 2, figsize=(12, 8))
+axs_2 = axs_2.flat  # flatten to a 1D iterator
 
-plt.tight_layout()
+for idx, (ax_2, metric) in enumerate(zip(axs_2, metrics)):
+    errs = [res['error'][idx] for res in results]
+    uncs = [res['uncertainty'][idx] for res in results]
+    
+    ax_2.set_title(f'{metric} error')
+    ax_2.set_xlabel('time')
+    ax_2.set_ylabel('error')
+    ax_2.plot(times, errs, label='error')
+    # ax_2.plot(times, uncs, label='uncertainty')
+    ax_2.fill_between(
+        times,
+        [u for u in uncs],
+        [-u for u in uncs],
+        alpha=0.2,
+        label='uncertainty',
+        color='C1'
+    )
+    ax_2.legend()
+    ax_2.grid()
 
+times = np.arange(0, len(infer_times) * 0.01, 0.01).tolist()
 
 plt.figure()
 plt.plot(times, infer_times)
@@ -148,7 +166,7 @@ plt.xlabel('Batch index')
 plt.ylabel('Time (s)')
 
 
-
+plt.tight_layout()
 plt.show()
     
     
