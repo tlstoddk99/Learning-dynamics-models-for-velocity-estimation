@@ -122,8 +122,11 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
         # Extract input window: [ax_imu, ay_imu, r_imu, omega_wheels]
-        cols = ["ax_imu", "ay_imu", "r_imu", "omega_wheels"]
-        return df.loc[start : start + self.input_seq_len - 1, cols].values
+        # cols = ["ax_imu", "ay_imu", "r_imu", "omega_wheels"]
+        # return df.loc[start : start + self.input_seq_len - 1, cols].values
+        cols = ["ax_imu", "ay_imu", "r_imu"]
+        input_data=df.loc[start : start + self.input_seq_len - 1, cols].values
+        return input_data.T
 
     def _get_target_window(
         self, df: pd.DataFrame, start: int
@@ -140,9 +143,10 @@ class DeBiasDataset(torch.utils.data.Dataset):
         mean_ax, mean_ay, mean_r = self._compute_mean_biases(pred)
 
         # Compute average friction coefficient
-        friction_mean = pred["friction"].mean()
+        # friction_mean = pred["friction"].mean()
 
-        return [mean_ax, mean_ay, mean_r, friction_mean]
+        # return [mean_ax, mean_ay, mean_r, friction_mean]
+        return [mean_ax, mean_ay, mean_r]
 
     def _compute_mean_biases(self, pred: pd.DataFrame) -> tuple:
         """

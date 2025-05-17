@@ -3,18 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 
+# He-normal initialization for Conv1d and Linear layers
 def _init_weights(module: nn.Module) -> None:
-    """He‐normal initialization for Conv1d and Linear layers, zero bias."""
     if isinstance(module, (nn.Conv1d, nn.Linear)):
         nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
-class CausalConv1d(nn.Conv1d):
+class CausalConv1d(nn.Module):
     """
-    1D causal convolution with automatic left‐padding and optional weight norm.
-    Inherits from nn.Conv1d for simplicity.
-    [B, L, C]
+    Causal 1D convolution: automatic left padding, weight norm after init.
     """
     def __init__(
         self,
@@ -25,28 +23,29 @@ class CausalConv1d(nn.Conv1d):
         bias: bool = True,
         use_weight_norm: bool = True
     ):
+        super().__init__()
         padding = (kernel_size - 1) * dilation
-        super().__init__(
+        conv = nn.Conv1d(
             in_channels, out_channels,
             kernel_size=kernel_size,
             dilation=dilation,
             padding=padding,
             bias=bias
         )
+        conv.apply(_init_weights)
         if use_weight_norm:
-            weight_norm(self)
-        self.register_buffer('_pad', torch.tensor(padding))
-        self.apply(_init_weights)
+            conv = weight_norm(conv)
+        self.conv = conv
+        self._pad = padding
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Conv1d already applies symmetric padding; slice off the right side.
-        x = super().forward(x)
-        if self._pad.item() > 0:
-            return x[..., :-self._pad.item()]
-        return x
+        out = self.conv(x)
+        if self._pad > 0:
+            return out[..., :-self._pad]
+        return out
 
 class TemporalBlock(nn.Module):
-    """Residual block in a TCN with two causal convs + dropout + activation."""
+    """Residual block: 2 x (CausalConv1d -> GN -> ReLU -> Dropout) + skip + ReLU"""
     def __init__(
         self,
         in_ch: int,
@@ -57,19 +56,17 @@ class TemporalBlock(nn.Module):
         activation: type[nn.Module] = nn.ReLU
     ):
         super().__init__()
-        layers = []
-        self.original_in_ch = in_ch
-        for _ in range(2):
-            layers.append(CausalConv1d(in_ch, out_ch, kernel_size, dilation))
-            layers.append(activation())
-            layers.append(nn.Dropout(dropout))
-            in_ch = out_ch  # for second conv
-        self.net = nn.Sequential(*layers)
-        # 1×1 downsampling if channels differ
-        self.downsample = (
-            nn.Conv1d(self.original_in_ch, out_ch, 1)
-            if self.original_in_ch != out_ch else None
+        self.net = nn.Sequential(
+            CausalConv1d(in_ch, out_ch, kernel_size, dilation),
+            nn.GroupNorm(min(out_ch, 8), out_ch),
+            activation(),
+            nn.Dropout(dropout),
+            CausalConv1d(out_ch, out_ch, kernel_size, dilation),
+            nn.GroupNorm(min(out_ch, 8), out_ch),
+            activation(),
+            nn.Dropout(dropout),
         )
+        self.downsample = (nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else None)
         if self.downsample:
             self.downsample.apply(_init_weights)
         self.final_act = nn.ReLU()
@@ -80,27 +77,24 @@ class TemporalBlock(nn.Module):
         return self.final_act(out + res)
 
 class TemporalConvNet(nn.Module):
-    """Stack of TemporalBlocks with exponentially increasing dilations."""
+    """Stack of TemporalBlocks with exponentially increasing dilations"""
     def __init__(
         self,
         num_inputs: int,
         num_channels: int,
         num_levels: int,
-        kernel_size: int = 2,
+        kernel_size: int = 3,
         dropout: float = 0.2,
         activation: type[nn.Module] = nn.ReLU
     ):
         super().__init__()
         blocks = []
+        # Receptive field: R = 1 + (kernel_size - 1)*(2^num_levels - 1)
         for i in range(num_levels):
             in_ch = num_inputs if i == 0 else num_channels
             dilation = 2 ** i
             blocks.append(
-                TemporalBlock(
-                    in_ch, num_channels,
-                    kernel_size, dilation,
-                    dropout, activation
-                )
+                TemporalBlock(in_ch, num_channels, kernel_size, dilation, dropout, activation)
             )
         self.network = nn.Sequential(*blocks)
 
@@ -109,20 +103,26 @@ class TemporalConvNet(nn.Module):
 
 class TCNGaussian(nn.Module):
     """
-    Temporal Conv Net that outputs mean and (positive) variance for a Gaussian.
+    TemporalConvNet predicting Gaussian parameters (mean, var) for drift estimation.
+    Applies GroupNorm on input channels: [ax, ay] and [r].
     """
     def __init__(
         self,
-        input_size: int,
-        output_size: int,
-        num_channels: int,
-        num_levels: int,
-        kernel_size: int = 2,
+        input_size: int = 3,
+        output_size: int = 3,
+        num_channels: int = 64,
+        num_levels: int = 8,
+        kernel_size: int = 3,
         dropout: float = 0.2,
         activation: type[nn.Module] = nn.ReLU,
-        eps: float = 1e-3
+        eps: float = 1e-6
     ):
         super().__init__()
+        self.eps = eps
+        # Input normalization: 2-channel and 1-channel groups
+        self.gn_xy = nn.GroupNorm(1, 2)
+        self.gn_r  = nn.GroupNorm(1, 1)
+
         self.tcn = TemporalConvNet(
             num_inputs=input_size,
             num_channels=num_channels,
@@ -133,22 +133,26 @@ class TCNGaussian(nn.Module):
         )
         self.linear_mean = nn.Linear(num_channels, output_size)
         self.linear_logvar = nn.Linear(num_channels, output_size)
-        # apply He init to linears
         self.linear_mean.apply(_init_weights)
         self.linear_logvar.apply(_init_weights)
-        self.eps = eps
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: (batch, input_size, seq_len)
-        Returns:
-            mean: (batch, output_size)
-            var: (batch, output_size), guaranteed > eps
-        """
-        features = self.tcn(x)              # (batch, num_channels, seq_len)
-        last = features[..., -1]            # (batch, num_channels)
-        mean = self.linear_mean(last)       # (batch, output_size)
-        logvar = self.linear_logvar(last)   # (batch, output_size)
-        var = F.softplus(logvar) + self.eps
+        # x: (batch, 3, seq_len)
+        xy = self.gn_xy(x[:, :2, :])
+        r  = self.gn_r(x[:, 2:, :])
+        x_norm = torch.cat([xy, r], dim=1)
+
+        features = self.tcn(x_norm)         # (B, C, seq)
+        last = features[..., -1]             # (B, C)
+        mean = self.linear_mean(last)       # (B, out)
+        logvar = self.linear_logvar(last)   # (B, out)
+        var = torch.exp(logvar).clamp(min=self.eps)
         return mean, var
+
+# Use built-in Gaussian NLL loss
+# torch.nn.functional.gaussian_nll_loss(input, target, var, eps, reduction)
+def gnll_loss(mean: torch.Tensor, var: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Gaussian Negative Log Likelihood using PyTorch's built-in function.
+    """
+    return F.gaussian_nll_loss(mean, target, var, eps=eps, reduction='mean')
