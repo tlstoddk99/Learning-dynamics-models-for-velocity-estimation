@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
+from torch import Tensor
 
 # He-normal initialization for Conv1d and Linear layers
 def _init_weights(module: nn.Module) -> None:
@@ -38,7 +39,7 @@ class CausalConv1d(nn.Module):
         self.conv = conv
         self._pad = padding
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         out = self.conv(x)
         if self._pad > 0:
             return out[..., :-self._pad]
@@ -71,7 +72,7 @@ class TemporalBlock(nn.Module):
             self.downsample.apply(_init_weights)
         self.final_act = nn.ReLU()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         out = self.net(x)
         res = x if self.downsample is None else self.downsample(x)
         return self.final_act(out + res)
@@ -98,7 +99,7 @@ class TemporalConvNet(nn.Module):
             )
         self.network = nn.Sequential(*blocks)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         return self.network(x)
 
 class TCNGaussian(nn.Module):
@@ -115,11 +116,10 @@ class TCNGaussian(nn.Module):
         kernel_size: int = 3,
         dropout: float = 0.2,
         activation: type[nn.Module] = nn.ReLU,
-        eps: float = 1e-6
+        eps: float = 1e-6,
     ):
         super().__init__()
         self.eps = eps
-        # Input normalization: 2-channel and 1-channel groups
         self.gn_xy = nn.GroupNorm(1, 2)
         self.gn_r  = nn.GroupNorm(1, 1)
 
@@ -131,12 +131,16 @@ class TCNGaussian(nn.Module):
             dropout=dropout,
             activation=activation
         )
-        self.linear_mean = nn.Linear(num_channels, output_size)
-        self.linear_logvar = nn.Linear(num_channels, output_size)
-        self.linear_mean.apply(_init_weights)
-        self.linear_logvar.apply(_init_weights)
+        self.head =nn.Linear(num_channels, output_size * 2)
+        self.head.apply(_init_weights)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """
+        Args:
+            x: (batch, 3, seq_len)
+        Returns:
+            mean: (batch, out), logvar: (batch, out)
+        """
         # x: (batch, 3, seq_len)
         xy = self.gn_xy(x[:, :2, :])
         r  = self.gn_r(x[:, 2:, :])
@@ -144,15 +148,10 @@ class TCNGaussian(nn.Module):
 
         features = self.tcn(x_norm)         # (B, C, seq)
         last = features[..., -1]             # (B, C)
-        mean = self.linear_mean(last)       # (B, out)
-        logvar = self.linear_logvar(last)   # (B, out)
-        var = torch.exp(logvar).clamp(min=self.eps)
-        return mean, var
-
-# Use built-in Gaussian NLL loss
-# torch.nn.functional.gaussian_nll_loss(input, target, var, eps, reduction)
-def gnll_loss(mean: torch.Tensor, var: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """
-    Gaussian Negative Log Likelihood using PyTorch's built-in function.
-    """
-    return F.gaussian_nll_loss(mean, target, var, eps=eps, reduction='mean')
+        
+        mu, raw_var = self.head(last).chunk(2, dim=-1)
+        var = F.softplus(raw_var) + self.eps
+        return mu, var
+        
+    def loss_function(self, mu: Tensor, var: Tensor, target: Tensor) -> Tensor:
+            return F.gaussian_nll_loss(mu, target, var, eps=self.eps)

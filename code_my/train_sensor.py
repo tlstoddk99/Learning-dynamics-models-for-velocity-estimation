@@ -13,10 +13,14 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # Local imports
-from sensor_models.sensor_refine_model import TCNGaussian, gnll_loss
+from code_my.sensor_models.debias_model import TCNGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# fix seed
+torch.manual_seed(42)
+np.random.seed(42)
 
 def build_model(input_size: int, output_size: int) -> torch.nn.Module:
     model = TCNGaussian(
@@ -57,7 +61,7 @@ def train_one_epoch(model, dataloader, optimizer, device):
     for inputs,targets in dataloader:
         optimizer.zero_grad()
         mu, var = model(inputs)
-        loss = gnll_loss(mu, var, targets)
+        loss = model.loss_function(mu, var, targets)
         loss.backward()
         optimizer.step()
 
@@ -71,7 +75,7 @@ def validate(model, dataloader, device):
     with torch.no_grad():
         for inputs, targets in dataloader:
             mu, var = model(inputs)
-            loss = gnll_loss(mu, var, targets)
+            loss = model.loss_function(mu, var, targets)
             losses.append(loss.item())
     return np.mean(losses)
 
@@ -92,16 +96,19 @@ def main():
     train_loss_history = []
     val_loss_history = []
     epoch_history = []
-    MAX_LOSS = 5
-    # start index: 1, end index: 3000
-    for epoch in tqdm(range(1, 3001), desc="Training Epochs", unit="epoch"):
+    MAX_LOSS = 10
+    train_loss = 0.0
+    val_loss = 0.0
+    
+    # start index: 1, end index: 2000
+    for epoch in tqdm(range(1, 2001), unit="epoch"):
         train_loss = train_one_epoch(model, train_loader, optimizer, device=device)
         val_loss = validate(model, val_loader, device=device)
 
         train_loss_history.append(np.clip(train_loss, -MAX_LOSS, MAX_LOSS))
         val_loss_history.append(np.clip(val_loss,   -MAX_LOSS, MAX_LOSS))
         epoch_history.append(epoch)
-            
+    
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -112,16 +119,16 @@ def main():
     print("Training complete. Best validation loss: {:.4f}".format(best_val_loss))
     
     
-    plt.figure()
+    plt.figure(dpi=300)
     plt.plot(epoch_history, train_loss_history, label='Train Loss')
     plt.plot(epoch_history, val_loss_history, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title('Loss over epochs')
     plt.legend()
-    plt.savefig(os.path.join(save_dir, 'loss_plot.png'))
+    plt.savefig(os.path.join(save_dir, 'loss_plot.png'),dpi=300, bbox_inches='tight')
     plt.close()
-    plt.show()
+    # plt.show()
 
 
 if __name__ == '__main__':

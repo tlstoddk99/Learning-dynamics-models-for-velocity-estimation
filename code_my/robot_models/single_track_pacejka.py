@@ -33,8 +33,12 @@ class SingleTrackPacejkaModel(torch.nn.Module):
         omega_wheels_dot = p.R / p.I_e * (p.K_fi * wx.Iq - p.R * Fx_f - p.R * Fx_r
                                           - wx.omega_wheels * p.b1 - torch.sign(wx.omega_wheels) * p.b0)
 
-        return torch.stack([v_x_dot, v_y_dot, r_dot, omega_wheels_dot, torch.zeros_like(wx.friction), torch.zeros_like(wx.delta), torch.zeros_like(wx.Iq)], dim=-1)
-
+        # return torch.stack([v_x_dot, v_y_dot, r_dot, omega_wheels_dot, torch.zeros_like(wx.friction), torch.zeros_like(wx.delta), torch.zeros_like(wx.Iq)], dim=-1)
+        x_dot = torch.stack(
+            [v_x_dot, v_y_dot, r_dot, omega_wheels_dot,
+             torch.zeros_like(wx.friction),torch.zeros_like(wx.delta), torch.zeros_like(wx.Iq)], dim=-1)
+        
+        return x_dot
 
 def observation(model: torch.nn.Module, x: torch.Tensor):
     x_dot = model.forward(torch.tensor(0.0), x)

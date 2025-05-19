@@ -3,66 +3,44 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import time
 import torch
-from sensor_models.sensor_refine_model import TCNGaussian
-from sensor_models.sensor_dataset import SensorDataset
-from utils.argparser import get_parser
+from code_my.sensor_models.debias_model import TCNGaussian
+# from sensor_models.sensor_dataset import SensorDataset
+from sensor_models.de_bias_dataset import DeBiasDataset
+from torch.utils.data import DataLoader
 
-
-
-
-def parse_args():
-    parser = get_parser()
-    return parser.parse_args()
-
-args = parse_args()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths and logging setup
 df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_test.csv', index_col=0)
 timestamp = time.strftime('%m-%d_%H-%M')
 
+# fix seed
+torch.manual_seed(42)
+np.random.seed(42)
 
-# Create the dataset
-test_dataset = SensorDataset(
+test_dateset = DeBiasDataset(
     df,
-    subsample_all=1,
-    Ts_multiplier=1,
-    check_new_run=True,
-    test_run_id=[],
-    test=False,
-    dtype=torch.float32 if args.common_precision == 32 else torch.float64,
-    device=device,
-    dataset_scaler=1.0,
-    # sequence_length=args.ukf_sequence_length,
-    sequence_length=200,
+    device=device
 )
-test_data_loader = torch.utils.data.DataLoader(
-    test_dataset, batch_size=1, shuffle=False
+test_dataloader = DataLoader(
+    test_dateset,
+    batch_size=1,
+    shuffle=False,
 )
 
-print(f"test dataloader shape: {test_dataset.batches.shape}")
-
-
-#create the model
 model = TCNGaussian(
-     input_size=4,
-    output_size=4,
-    num_channels=256,
-    num_levels=4,
-    kernel_size=2,
-    dropout=0.2,
-    # activation=torch.nn.ReLU,
-    activation=torch.nn.SiLU,
-    eps=1e-3
-)
+        input_size=3,
+        output_size=3,
+        dropout=0.2,
+        activation=torch.nn.SiLU
+    )
 model.to(device)
 
-
-
 # Load the model state dict
-model_state_dict = torch.load('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-12_19-37/best_epoch_2384_loss_1.6559.pt')
-
-model.load_state_dict(model_state_dict)
+# model_state_dict = torch.load('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-12_19-37/best_epoch_2384_loss_1.6559.pt')
+model_state_dict = torch.load(
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-19_17-26/best_epoch_2000_loss_1.2820.pt'
+                              )
 model.eval()
 
 count = 0
@@ -71,23 +49,19 @@ infer_times = []
 
 model.eval()
 with torch.no_grad():
-    for batch in test_data_loader:
-        imu = batch[:,7:10,:]
-        wheel = batch[:,3:4,:]
-        inputs = torch.cat((imu, wheel), dim=1).to(device)
+    for inputs,targets in test_dataloader:
         time0 =time.time()
         mu, var = model(inputs)
         time1 = time.time()
-        
-        targets = batch[:, -4:, -1]
         
         mu = mu.cpu().numpy().flatten()
         var = var.cpu().numpy().flatten()
         targets = targets.cpu().numpy().flatten()
         
-        uncertainty = np.sqrt(var)
-        
-       
+        # 3 sigma rule: 99.73% of the data
+        # 2 sigma rule: 95.45% of the data
+        # 1 sigma rule: 68.27% of the data
+        uncertainty = 2*np.sqrt(var)
         
         results.append({
             'prediction': mu,
@@ -103,7 +77,8 @@ with torch.no_grad():
 #[ax,ay,r,wheel_speed]
 
 # Define your metrics in order
-metrics = ['ax', 'ay', 'r', 'wheel_speed']
+# metrics = ['ax', 'ay', 'r', 'wheel_speed']
+metrics = ['ax', 'ay', 'r']
 
 # Create a 2×2 grid of subplots
 fig, axs = plt.subplots(2, 2, figsize=(12, 8))
