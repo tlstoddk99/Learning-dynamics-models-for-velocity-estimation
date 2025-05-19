@@ -14,9 +14,7 @@ from tqdm import tqdm
 
 # Local imports
 from sensor_models.sensor_refine_model import TCNGaussian, gnll_loss
-# from sensor_models.sensor_dataset import SensorDataset
 from sensor_models.de_bias_dataset import DeBiasDataset
-from utils.argparser import get_parser
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -30,17 +28,28 @@ def build_model(input_size: int, output_size: int) -> torch.nn.Module:
     return model.to(device)
 
 
-def get_dataloader(df, train: bool) -> DataLoader:
-    dataset = DeBiasDataset(
+def get_dataloader(df) -> DataLoader:
+    train_dataset = DeBiasDataset(
         df,
+        run_ids=[27,29,32],
         device=device
     )
-    return DataLoader(
-        dataset,
-        batch_size=32,
-        shuffle=train,
-        # num_workers=3,
+    val_dataset = DeBiasDataset(
+        df,
+        run_ids=[6,7,13,18,23],
+        device=device
     )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=32,
+        shuffle=False,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=32,
+        shuffle=False,
+    )
+    return train_loader , val_loader
 
 def train_one_epoch(model, dataloader, optimizer, device):
     model.train()
@@ -76,33 +85,36 @@ def main():
 
     # Build model, dataloaders, optimizer
     model = build_model(input_size=4, output_size=4, )
-    train_loader = get_dataloader(df, train=True)
-    val_loader = get_dataloader(df, train=False)
+    train_loader, val_loader = get_dataloader(df)
     optimizer = Adam(model.parameters(), lr=5e-4)
 
     best_val_loss = float('inf')
     train_loss_history = []
     val_loss_history = []
-    for epoch in range(1, 3000):
+    epoch_history = []
+    MAX_LOSS = 5
+    # start index: 1, end index: 3000
+    for epoch in tqdm(range(1, 3001), desc="Training Epochs", unit="epoch"):
         train_loss = train_one_epoch(model, train_loader, optimizer, device=device)
         val_loss = validate(model, val_loader, device=device)
 
-        
-        train_loss_history.append(train_loss)
-        val_loss_history.append(val_loss)
+        train_loss_history.append(np.clip(train_loss, -MAX_LOSS, MAX_LOSS))
+        val_loss_history.append(np.clip(val_loss,   -MAX_LOSS, MAX_LOSS))
+        epoch_history.append(epoch)
+            
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            print(f"Epoch {epoch:04d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            print(f"\nTrain Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
             save_path = os.path.join(save_dir, f"best_epoch_{epoch}_loss_{val_loss:.4f}.pt")
             torch.save(model.state_dict(), save_path)
 
     print("Training complete. Best validation loss: {:.4f}".format(best_val_loss))
     
-    # Plotting
+    
     plt.figure()
-    plt.plot(train_loss_history, label='Train Loss')
-    plt.plot(val_loss_history, label='Validation Loss')
+    plt.plot(epoch_history, train_loss_history, label='Train Loss')
+    plt.plot(epoch_history, val_loss_history, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title('Loss over epochs')

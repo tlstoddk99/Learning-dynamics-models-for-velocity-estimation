@@ -3,7 +3,6 @@ import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 
-
 class DeBiasDataset(torch.utils.data.Dataset):
     """
     A dataset that uses the past 5 seconds (500 samples) of IMU and wheel speed data as input,
@@ -28,6 +27,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         df: pd.DataFrame,
         input_seq_len: int = 500,
         pred_seq_len: int = 100,
+        run_ids: list = None,
         dt: float = 0.01,
         dtype=torch.float32,
         device=torch.device("cpu"),
@@ -38,6 +38,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         self.dt = dt
         self.dtype = dtype
         self.device = device
+        self.run_ids = run_ids
         
         self.plot = plot
 
@@ -56,6 +57,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         
         # Split DataFrame by run
         runs = self._split_runs(df)
+        
         # If plotting is enabled and run is long enough, visualize IMU data
         for run_id, run_df in runs.items():
             if plot and len(run_df) > self.input_seq_len + self.pred_seq_len:    
@@ -80,14 +82,25 @@ class DeBiasDataset(torch.utils.data.Dataset):
             return df.fillna(0)
         return df
 
-    def _split_runs(self, df: pd.DataFrame) -> dict:
-        """
-        Split the DataFrame by run_id and reset each group's index.
-        """
-        return {
-            rid: grp.reset_index(drop=True)
-            for rid, grp in df.groupby("run_id")
-        }
+    def _split_runs(
+        self,
+        dataframe: pd.DataFrame
+    ) -> dict:
+        split_dict = {}
+        if self.run_ids is not None:
+            # selected run_id
+            for run_id in self.run_ids:
+                run_df = dataframe[dataframe["run_id"] == run_id]
+                split_dict[run_id] = run_df.reset_index(drop=True)
+            return split_dict
+        else:
+            # all run_id
+            run_ids = dataframe["run_id"].unique()
+            for run_id in run_ids:
+                run_df = dataframe[dataframe["run_id"] == run_id]
+                split_dict[run_id] = run_df.reset_index(drop=True)
+            return split_dict
+ 
 
     def _generate_samples(self, runs: dict) -> tuple:
         """
@@ -314,8 +327,8 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     # Load dataset CSV
-    # df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_train_and_val.csv")
+    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_train_and_val.csv")
     # For test set use:
-    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_test.csv")
+    # df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_test.csv")
     # Create dataset and plot if desired
-    dataset = DeBiasDataset(df, plot=True)
+    dataset = DeBiasDataset(df, plot=True, run_ids=[27,29,32])
