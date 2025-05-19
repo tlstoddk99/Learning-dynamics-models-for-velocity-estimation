@@ -116,7 +116,7 @@ class TCNGaussian(nn.Module):
         kernel_size: int = 3,
         dropout: float = 0.2,
         activation: type[nn.Module] = nn.ReLU,
-        eps: float = 1e-6,
+        eps: float = 1e-4,
     ):
         super().__init__()
         self.eps = eps
@@ -139,19 +139,19 @@ class TCNGaussian(nn.Module):
         Args:
             x: (batch, 3, seq_len)
         Returns:
-            mean: (batch, out), logvar: (batch, out)
+            mean: (batch, out), var: (batch, out)
         """
         # x: (batch, 3, seq_len)
         xy = self.gn_xy(x[:, :2, :])
         r  = self.gn_r(x[:, 2:, :])
         x_norm = torch.cat([xy, r], dim=1)
 
-        features = self.tcn(x_norm)         # (B, C, seq)
-        last = features[..., -1]             # (B, C)
+        features = self.tcn(x_norm)        
+        last = features[..., -1]             
         
         mu, raw_var = self.head(last).chunk(2, dim=-1)
         var = F.softplus(raw_var) + self.eps
         return mu, var
         
     def loss_function(self, mu: Tensor, var: Tensor, target: Tensor) -> Tensor:
-            return F.gaussian_nll_loss(mu, target, var, eps=self.eps)
+            return F.gaussian_nll_loss(mu, target, var, eps=self.eps, reduction='mean')

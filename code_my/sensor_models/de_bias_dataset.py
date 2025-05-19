@@ -44,17 +44,6 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
         # Fill missing values
         df = self._fill_na(df)
-        
-        # self.raw_imu = df[["ax_imu", "ay_imu", "r_imu"]].to_numpy()
-        # self.gt_imu = self.make_gt_imu(df)
-        # optimal_taus, optimal_ms=self.optimal_window_size(
-        #     self.raw_imu, self.gt_imu, self.dt
-        # )
-        # print(f"df length: {len(df)}")
-        # print(f"Optimal averaging time: {optimal_taus}, Window size: {optimal_ms}")
-        
-        
-        
         # Split DataFrame by run
         runs = self._split_runs(df)
         
@@ -134,9 +123,6 @@ class DeBiasDataset(torch.utils.data.Dataset):
         return inputs, targets
 
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        # Extract input window: [ax_imu, ay_imu, r_imu, omega_wheels]
-        # cols = ["ax_imu", "ay_imu", "r_imu", "omega_wheels"]
-        # return df.loc[start : start + self.input_seq_len - 1, cols].values
         cols = ["ax_imu", "ay_imu", "r_imu"]
         input_data=df.loc[start : start + self.input_seq_len - 1, cols].values
         return input_data.T
@@ -154,11 +140,6 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
         # Compute average IMU biases
         mean_ax, mean_ay, mean_r = self._compute_mean_biases(pred)
-
-        # Compute average friction coefficient
-        # friction_mean = pred["friction"].mean()
-
-        # return [mean_ax, mean_ay, mean_r, friction_mean]
         return [mean_ax, mean_ay, mean_r]
 
     def _compute_mean_biases(self, pred: pd.DataFrame) -> tuple:
@@ -205,11 +186,6 @@ class DeBiasDataset(torch.utils.data.Dataset):
         raw_imu = np.column_stack((ax_imu, ay_imu, r_imu))
         gt_imu = np.column_stack((ax_true, ay_true, r_true))
         
-        
-        optimal_tau, optimal_m = self.optimal_window_size(raw_imu, gt_imu, self.dt)
-        print(f"run_id: {run_df['run_id'].iloc[0]}, run_length: {n}")
-        # print(f"Optimal averaging time: {optimal_tau:.2f} s, Window size: {optimal_m} samples")
-        print(f"Optimal averaging time: {optimal_tau}, Window size: {optimal_m}")
 
         # Prepare arrays for biases
         pred = self.pred_seq_len
@@ -260,62 +236,6 @@ class DeBiasDataset(torch.utils.data.Dataset):
         r_true  = df["r"].to_numpy()
         return np.column_stack((ax_true, ay_true, r_true))
     
-    def allan_deviation(self,x: np.ndarray, dt: float):
-        """
-        Compute Allan deviation for given 1D signal x with sampling period dt.
-        Returns:
-            taus (np.ndarray): Array of averaging times τ = m * dt
-            adevs (np.ndarray): Corresponding Allan deviations σ(τ)
-            ms (np.ndarray): Window sizes m (in samples)
-        """
-        N = len(x)
-        max_m = N // 2
-        # Use powers of two for window sizes
-        exponent_max = int(np.floor(np.log2(max_m)))
-        ms = 2 ** np.arange(0, exponent_max + 1)
-        taus = ms * dt
-        adevs = np.zeros_like(taus, dtype=float)
-        
-        for i, m in enumerate(ms):
-            M = N // m
-            # Compute segment means
-            x_bar = np.array([np.mean(x[j*m:(j+1)*m]) for j in range(M)])
-            # Compute Allan variance for this m
-            diffs = np.diff(x_bar)
-            adevs[i] = np.sqrt(0.5 * np.mean(diffs**2))
-        
-        return taus, adevs, ms
-
-    def optimal_window_size(self, raw: np.ndarray, gt: np.ndarray, dt: float):
-        """
-        채널별 최적 윈도우 크기를 반환합니다.
-        Returns:
-            optimal_taus (np.ndarray): 채널별 최적 τ (초)
-            optimal_ms  (np.ndarray): 채널별 최적 m (샘플 개수)
-        """
-        residual = raw - gt       # shape (N, 3)
-        N, C = residual.shape     # C = 3
-        optimal_taus = np.zeros(C)
-        optimal_ms   = np.zeros(C, dtype=int)
-        
-        t = np.arange(N)
-        for i in range(C):
-            # 1) 채널 i의 신호만 뽑아서 추세 제거
-            res_i = residual[:, i]
-            p = np.polyfit(t, res_i, 1)
-            trend = np.polyval(p, t)      # shape (N,)
-            detrended = res_i - trend     # shape (N,)
-            
-            # 2) Allan 편차 계산
-            taus, adevs, ms = self.allan_deviation(detrended, dt)
-            
-            # 3) 첫 포인트(τ=T0)는 제외하고 최솟값 인덱스 찾기
-            idx_min = np.argmin(adevs[1:]) + 1
-            optimal_taus[i] = taus[idx_min]
-            optimal_ms[i]  = int(ms[idx_min])
-        
-        return optimal_taus, optimal_ms
-    
     def __len__(self):
         # Return number of samples
         return self.inputs.size(0)
@@ -326,9 +246,5 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    # Load dataset CSV
     df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_train_and_val.csv")
-    # For test set use:
-    # df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_test.csv")
-    # Create dataset and plot if desired
-    dataset = DeBiasDataset(df, plot=True, run_ids=[27,29,32])
+    dataset = DeBiasDataset(df, plot=True)

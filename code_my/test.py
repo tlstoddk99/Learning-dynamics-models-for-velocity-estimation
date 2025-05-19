@@ -3,15 +3,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import time
 import torch
-from code_my.sensor_models.debias_model import TCNGaussian
 # from sensor_models.sensor_dataset import SensorDataset
+from sensor_models.debias_model import TCNGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 from torch.utils.data import DataLoader
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths and logging setup
-df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_test.csv', index_col=0)
+# df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_test.csv', index_col=0)
+df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_train_and_val.csv', index_col=0)
 timestamp = time.strftime('%m-%d_%H-%M')
 
 # fix seed
@@ -39,7 +40,7 @@ model.to(device)
 # Load the model state dict
 # model_state_dict = torch.load('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-12_19-37/best_epoch_2384_loss_1.6559.pt')
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-19_17-26/best_epoch_2000_loss_1.2820.pt'
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-19_19-57/best_epoch_1000_loss_-0.2402.pt'
                               )
 model.eval()
 

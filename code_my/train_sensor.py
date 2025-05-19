@@ -8,12 +8,12 @@ import matplotlib.pyplot as plt
 
 import torch
 import numpy as np
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # Local imports
-from code_my.sensor_models.debias_model import TCNGaussian
+from sensor_models.debias_model import TCNGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -24,8 +24,8 @@ np.random.seed(42)
 
 def build_model(input_size: int, output_size: int) -> torch.nn.Module:
     model = TCNGaussian(
-        input_size=3,
-        output_size=3,
+        input_size=input_size,
+        output_size=output_size,
         dropout=0.2,
         activation=torch.nn.SiLU
     )
@@ -88,9 +88,9 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Build model, dataloaders, optimizer
-    model = build_model(input_size=4, output_size=4, )
+    model = build_model(input_size=3, output_size=3)
     train_loader, val_loader = get_dataloader(df)
-    optimizer = Adam(model.parameters(), lr=5e-4)
+    optimizer = AdamW(model.parameters(), lr=1e-3)
 
     best_val_loss = float('inf')
     train_loss_history = []
