@@ -1,19 +1,19 @@
 import os
 import time
-import argparse
-from copy import deepcopy
 import pandas as pd
 import wandb
 import matplotlib.pyplot as plt
-
 import torch
 import numpy as np
 from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
+import pickle
 
 # Local imports
 from sensor_models.debias_model import TCNGaussian
+from sensor_models.debias_mlp_model import MLPGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -21,51 +21,87 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # fix seed
 torch.manual_seed(42)
 np.random.seed(42)
+torch.cuda.manual_seed(42)
+torch.cuda.manual_seed_all(42)
+
+
+
 
 def build_model(input_size: int, output_size: int) -> torch.nn.Module:
     model = TCNGaussian(
-        input_size=input_size,
-        output_size=output_size,
+        activation=torch.nn.SiLU,
         dropout=0.2,
-        activation=torch.nn.SiLU
     )
+    # model = MLPGaussian(
+    #     activation=torch.nn.Mish,
+    # )
+        
     return model.to(device)
 
 
-def get_dataloader(df) -> DataLoader:
-    train_dataset = DeBiasDataset(
-        df,
-        run_ids=[27,29,32],
-        device=device
-    )
-    val_dataset = DeBiasDataset(
-        df,
-        run_ids=[6,7,13,18,23],
-        device=device
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=32,
-        shuffle=False,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=32,
-        shuffle=False,
-    )
-    return train_loader , val_loader
+def get_dataloader(df, save_path):
+    # Prepare train/validation datasets
+    train_ids, val_ids = [27, 29, 32], [6, 7, 13, 18, 23]
+    train_ds = DeBiasDataset(df, run_ids=train_ids, device=device)
+    val_ds   = DeBiasDataset(df, run_ids=val_ids,   device=device)
 
+    # Initialize scalers
+    input_scaler  = StandardScaler()
+    target_scaler = StandardScaler()
+
+    # Helper: flatten inputs/targets to 2D arrays
+    def flatten(ds):
+        # ds.inputs: (N, seq_len, feat) → permute to (N, feat, seq_len) → reshape to (N*seq_len, feat)
+        X = ds.inputs.permute(0, 2, 1).reshape(-1, ds.inputs.size(2)).cpu().numpy()
+        y = ds.targets.cpu().numpy()
+        return X, y
+
+    # Fit scalers on train set
+    X_train, y_train = flatten(train_ds)
+    input_scaler.fit(X_train)
+    target_scaler.fit(y_train)
+
+    # Helper: scale and restore each dataset
+    def scale_dataset(ds):
+        X2d, y2d = flatten(ds)
+        Xs = input_scaler.transform(X2d)
+        ys = target_scaler.transform(y2d)
+        N, seq_len, feat = ds.inputs.size()
+        # reshape back to (N, feat, seq_len), then permute to (N, seq_len, feat)
+        ds.inputs  = torch.tensor(Xs.reshape(N, feat, seq_len), dtype=torch.float32, device=device)\
+                           .permute(0, 2, 1)
+        ds.targets = torch.tensor(ys,dtype=torch.float32, device=device)
+
+    # Apply scaling to both train and validation
+    for ds in (train_ds, val_ds):
+        scale_dataset(ds)
+
+    # Build DataLoaders
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False)
+
+    # Save scalers for later use
+    os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(save_path, 'input_scaler.pkl'),  'wb') as f:
+        pickle.dump(input_scaler, f)
+    with open(os.path.join(save_path, 'target_scaler.pkl'), 'wb') as f:
+        pickle.dump(target_scaler, f)
+
+    return train_loader, val_loader
+  
 def train_one_epoch(model, dataloader, optimizer, device):
     model.train()
     losses = []
     for inputs,targets in dataloader:
         optimizer.zero_grad()
+        # inputs = inputs.permute(0, 2, 1)
+        # inputs=inputs.flatten(start_dim=1)
         mu, var = model(inputs)
         loss = model.loss_function(mu, var, targets)
         loss.backward()
         optimizer.step()
-
         losses.append(loss.item())
+        
     return np.mean(losses)
 
 
@@ -74,9 +110,12 @@ def validate(model, dataloader, device):
     losses = []
     with torch.no_grad():
         for inputs, targets in dataloader:
+            # inputs = inputs.permute(0, 2, 1)  
+            # inputs = inputs.flatten(start_dim=1)
             mu, var = model(inputs)
             loss = model.loss_function(mu, var, targets)
             losses.append(loss.item())
+            
     return np.mean(losses)
 
 
@@ -89,8 +128,8 @@ def main():
 
     # Build model, dataloaders, optimizer
     model = build_model(input_size=3, output_size=3)
-    train_loader, val_loader = get_dataloader(df)
-    optimizer = AdamW(model.parameters(), lr=1e-3)
+    train_loader, val_loader = get_dataloader(df, save_dir)
+    optimizer = AdamW(model.parameters(), lr=5e-4)
 
     best_val_loss = float('inf')
     train_loss_history = []
@@ -119,16 +158,16 @@ def main():
     print("Training complete. Best validation loss: {:.4f}".format(best_val_loss))
     
     
-    plt.figure(dpi=300)
+    plt.figure(dpi=500)
     plt.plot(epoch_history, train_loss_history, label='Train Loss')
     plt.plot(epoch_history, val_loss_history, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.title('Loss over epochs')
     plt.legend()
-    plt.savefig(os.path.join(save_dir, 'loss_plot.png'),dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(save_dir, 'loss_plot.png'),dpi=500, bbox_inches='tight')
     plt.close()
-    # plt.show()
+
 
 
 if __name__ == '__main__':

@@ -142,9 +142,11 @@ class TCNGaussian(nn.Module):
             mean: (batch, out), var: (batch, out)
         """
         # x: (batch, 3, seq_len)
-        xy = self.gn_xy(x[:, :2, :])
-        r  = self.gn_r(x[:, 2:, :])
-        x_norm = torch.cat([xy, r], dim=1)
+        # xy = self.gn_xy(x[:, :2, :])
+        # r  = self.gn_r(x[:, 2:, :])
+        # x_norm = torch.cat([xy, r], dim=1)
+        
+        x_norm = x
 
         features = self.tcn(x_norm)        
         last = features[..., -1]             
