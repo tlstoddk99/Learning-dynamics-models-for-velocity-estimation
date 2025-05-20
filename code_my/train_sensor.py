@@ -79,7 +79,7 @@ def main():
     # Build model, dataloaders, optimizer
     model = build_model(input_size=3, output_size=3)
     train_loader, val_loader = get_dataloader(df, save_dir)
-    optimizer = AdamW(model.parameters(), lr=1e-4)
+    optimizer = AdamW(model.parameters(), lr=1e-5)
 
     best_val_loss = float('inf')
     train_loss_history = []

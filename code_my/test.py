@@ -19,10 +19,8 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_13-12/best_epoch_295_loss_-1.1085.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_15-15/best_epoch_641_loss_-1.1516.pt',
                               )
-# input_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/input_scaler.pkl'
-# target_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/target_scaler.pkl'
 timestamp = time.strftime('%m-%d_%H-%M')
 
 # fix seed
@@ -32,48 +30,20 @@ torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
 
-# with open(input_scaler_path, 'rb') as f:
-#     input_scaler = pickle.load(f)
-# with open(target_scaler_path, 'rb') as f:
-#     target_scaler = pickle.load(f)
 
 test_dateset = DeBiasDataset(
         df,
         device=device
     )
 
-# def flatten(ds):
-#     X = ds.inputs.permute(0, 2, 1).reshape(-1, ds.inputs.size(2)).cpu().numpy()
-#     y = ds.targets.cpu().numpy()
-#     return X, y
-
-# def scale_dataset(ds):
-#     X2d, y2d = flatten(ds)
-#     Xs = input_scaler.transform(X2d)
-#     ys = target_scaler.transform(y2d)
-#     N, seq_len, feat = ds.inputs.size()
-#     # reshape back to (N, feat, seq_len), then permute to (N, seq_len, feat)
-#     ds.inputs  = torch.tensor(Xs.reshape(N, feat, seq_len), dtype=torch.float32, device=device)\
-#                         .permute(0, 2, 1)
-#     ds.targets = torch.tensor(ys,dtype=torch.float32, device=device)
-
-# scale_dataset(test_dateset)
-
 test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
 
-model = TCNGaussian(
-        input_size=3,
-        output_size=3,
-        dropout=0.2,
-        activation=torch.nn.SiLU
-    )
-# model= MLPGaussian(
-#     activation=torch.nn.SiLU,
-# )
+model = TCNGaussian()
 model.to(device)
 
 
-
+model.load_state_dict(model_state_dict)
+model = model.to(device)
 
 model.eval()
 
@@ -122,10 +92,6 @@ metrics = ['ax', 'ay', 'r']
 fig, axs = plt.subplots(3, 1)
 axs = axs.flat  # flatten to a 1D iterator
 
-# Prepare your data once
-# dt = 0.01
-# N = len(results)
-# times = [i * dt for i in range(N)]
 times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
 
 # Loop over each metric/index
