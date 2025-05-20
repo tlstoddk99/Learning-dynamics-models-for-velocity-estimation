@@ -19,10 +19,10 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/best_epoch_2000_loss_0.9525.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_13-12/best_epoch_295_loss_-1.1085.pt',
                               )
-input_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/input_scaler.pkl'
-target_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/target_scaler.pkl'
+# input_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/input_scaler.pkl'
+# target_scaler_path = '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_01-41/target_scaler.pkl'
 timestamp = time.strftime('%m-%d_%H-%M')
 
 # fix seed
@@ -32,32 +32,32 @@ torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
 
-with open(input_scaler_path, 'rb') as f:
-    input_scaler = pickle.load(f)
-with open(target_scaler_path, 'rb') as f:
-    target_scaler = pickle.load(f)
+# with open(input_scaler_path, 'rb') as f:
+#     input_scaler = pickle.load(f)
+# with open(target_scaler_path, 'rb') as f:
+#     target_scaler = pickle.load(f)
 
 test_dateset = DeBiasDataset(
         df,
         device=device
     )
 
-def flatten(ds):
-    X = ds.inputs.permute(0, 2, 1).reshape(-1, ds.inputs.size(2)).cpu().numpy()
-    y = ds.targets.cpu().numpy()
-    return X, y
+# def flatten(ds):
+#     X = ds.inputs.permute(0, 2, 1).reshape(-1, ds.inputs.size(2)).cpu().numpy()
+#     y = ds.targets.cpu().numpy()
+#     return X, y
 
-def scale_dataset(ds):
-    X2d, y2d = flatten(ds)
-    Xs = input_scaler.transform(X2d)
-    ys = target_scaler.transform(y2d)
-    N, seq_len, feat = ds.inputs.size()
-    # reshape back to (N, feat, seq_len), then permute to (N, seq_len, feat)
-    ds.inputs  = torch.tensor(Xs.reshape(N, feat, seq_len), dtype=torch.float32, device=device)\
-                        .permute(0, 2, 1)
-    ds.targets = torch.tensor(ys,dtype=torch.float32, device=device)
+# def scale_dataset(ds):
+#     X2d, y2d = flatten(ds)
+#     Xs = input_scaler.transform(X2d)
+#     ys = target_scaler.transform(y2d)
+#     N, seq_len, feat = ds.inputs.size()
+#     # reshape back to (N, feat, seq_len), then permute to (N, seq_len, feat)
+#     ds.inputs  = torch.tensor(Xs.reshape(N, feat, seq_len), dtype=torch.float32, device=device)\
+#                         .permute(0, 2, 1)
+#     ds.targets = torch.tensor(ys,dtype=torch.float32, device=device)
 
-scale_dataset(test_dateset)
+# scale_dataset(test_dateset)
 
 test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
 
@@ -89,31 +89,24 @@ with torch.no_grad():
         mu, var = model(inputs)
         time1 = time.time()
         
-        mu = mu.cpu().numpy()
-        var = var.cpu().numpy()
-        targets = targets.cpu().numpy()
+        mu = mu.cpu().numpy().flatten()
+        var = var.cpu().numpy().flatten()
+        targets = targets.cpu().numpy().flatten()
         
-        mu_orig      = target_scaler.inverse_transform(mu.reshape(-1, 1)).flatten()
-        targets_orig = target_scaler.inverse_transform(targets.reshape(-1, 1)).flatten()
+        std= np.sqrt(var)
 
-     
-        scale = target_scaler.scale_[0]  
-        var_orig = var * (scale ** 2)
-
-        std_orig = np.sqrt(var_orig)
-       
-        
         # 3 sigma rule: 99.73% of the data
         # 2 sigma rule: 95.45% of the data
         # 1 sigma rule: 68.27% of the data
-        uncertainty = 2*std_orig
-        
+        uncertainty = 2*std
+
         results.append({
             'prediction': mu,
             'target': targets,
             'error': (mu - targets),
             'uncertainty': uncertainty,
         })
+        
         if count >2:
             infer_times.append(time1 - time0)
         count += 1
@@ -126,11 +119,14 @@ with torch.no_grad():
 metrics = ['ax', 'ay', 'r']
 
 # Create a 2×2 grid of subplots
-fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+fig, axs = plt.subplots(3, 1)
 axs = axs.flat  # flatten to a 1D iterator
 
 # Prepare your data once
-times = np.arange(0, len(results) * 0.01, 0.01).tolist()
+# dt = 0.01
+# N = len(results)
+# times = [i * dt for i in range(N)]
+times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
 
 # Loop over each metric/index
 for idx, (ax, metric) in enumerate(zip(axs, metrics)):
@@ -154,7 +150,7 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
     ax.legend()
     ax.grid()
     
-fig, axs_2 = plt.subplots(2, 2, figsize=(12, 8))
+fig, axs_2 =  plt.subplots(3, 1)
 axs_2 = axs_2.flat  # flatten to a 1D iterator
 
 for idx, (ax_2, metric) in enumerate(zip(axs_2, metrics)):
