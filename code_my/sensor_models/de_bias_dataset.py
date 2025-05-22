@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+from scipy.signal import butter, filtfilt
 
 class DeBiasDataset(torch.utils.data.Dataset):
     """
@@ -26,7 +27,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         self,
         df: pd.DataFrame,
         input_seq_len: int = 500,
-        pred_seq_len: int = 500,
+        pred_seq_len: int = 100,
         step: int = 10,
         run_ids: list = None,
         dt: float = 0.01,
@@ -113,7 +114,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         return inputs, targets
 
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        cols = ["ax_imu", "ay_imu", "r_imu", "omega_wheels"]
+        cols = ["ax_imu", "ay_imu", "r_imu"]
         input_df = self._preprocess_data(df.copy())
         data = input_df.loc[start : start + self.input_seq_len - 1, cols].values
         return data.T
@@ -209,7 +210,7 @@ if __name__ == "__main__":
     print(f"minmax ax_imu: {dataset.inputs[:, 0, :].min()}, {dataset.inputs[:, 0, :].max()}")
     print(f"minmax ay_imu: {dataset.inputs[:, 1, :].min()}, {dataset.inputs[:, 1, :].max()}")
     print(f"minmax r_imu: {dataset.inputs[:, 2, :].min()}, {dataset.inputs[:, 2, :].max()}")
-    print(f"minmax wheel: {dataset.inputs[:, 3, :].min()}, {dataset.inputs[:, 3, :].max()}")
+    # print(f"minmax wheel: {dataset.inputs[:, 3, :].min()}, {dataset.inputs[:, 3, :].max()}")
     print()
     print(f"minmax ax_bias: {dataset.targets[:, 0].min()}, {dataset.targets[:, 0].max()}")
     print(f"minmax ay_bias: {dataset.targets[:, 1].min()}, {dataset.targets[:, 1].max()}")

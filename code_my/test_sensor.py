@@ -7,18 +7,19 @@ import pickle
 from sklearn.preprocessing import StandardScaler
 from sensor_models.debias_model import TCNGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
+from sensor_models.de_bias_dataset_lpf import DeBiasDatasetLpf, preprocess_df
 from torch.utils.data import DataLoader
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths and logging setup
-df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_test.csv', index_col=0)
-# df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_train_and_val.csv', index_col=0)
+df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test.csv', index_col=0)
+# df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv', index_col=0)
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-22_17-11/best_epoch_75_loss_-0.9185.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-23_00-21/best_epoch_169_loss_1.0351.pt',
                               )
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -28,12 +29,15 @@ np.random.seed(42)
 torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
-test_dateset = DeBiasDataset(
-        df,
-        device=device
-    )
+# test_dateset = DeBiasDataset(
+#         df,
+#         device=device
+#     )
 
+df = preprocess_df(df)
+test_dateset = DeBiasDatasetLpf(df,device=device)
 test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
+
 
 model = TCNGaussian()
 model.to(device)

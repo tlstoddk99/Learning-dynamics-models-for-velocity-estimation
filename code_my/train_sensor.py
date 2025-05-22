@@ -11,7 +11,8 @@ from tqdm import tqdm
 
 # Local imports
 from sensor_models.debias_model import TCNGaussian
-from sensor_models.de_bias_dataset import DeBiasDataset
+# from sensor_models.de_bias_dataset import DeBiasDataset
+from sensor_models.de_bias_dataset_lpf import DeBiasDatasetLpf, preprocess_df
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -23,9 +24,10 @@ torch.cuda.manual_seed_all(42)
 
 def get_dataloader(df):
     # Prepare train/validation datasets
+    df = preprocess_df(df)
     train_ids, val_ids = [10, 12, 23, 27, 28, 29, 31, 32], [0, 2, 6, 7, 13, 18]
-    train_ds = DeBiasDataset(df, run_ids=train_ids, device=device)
-    val_ds   = DeBiasDataset(df, run_ids=val_ids,   device=device)
+    train_ds = DeBiasDatasetLpf(df, run_ids=train_ids, device=device)
+    val_ds   = DeBiasDatasetLpf(df, run_ids=val_ids,   device=device)
 
     # Build DataLoaders
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
@@ -33,7 +35,7 @@ def get_dataloader(df):
 
     return train_loader, val_loader
 
-def train_one_epoch(model, dataloader, optimizer):
+def train_one_epoch(model, dataloader, optimizer, scheduler):
     model.train()
     losses = []
     for inputs,targets in dataloader:
@@ -42,6 +44,7 @@ def train_one_epoch(model, dataloader, optimizer):
         loss = model.loss_function(mu, var, targets)
         loss.backward()
         optimizer.step()
+        scheduler.step()
         losses.append(loss.item())
         
     return np.mean(losses)
@@ -61,17 +64,31 @@ def validate(model, dataloader):
 
 def main():
     # Paths and logging setup
-    df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_train_and_val.csv', index_col=0)
+    df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv', index_col=0)
     timestamp = time.strftime('%m-%d_%H-%M')
     save_dir = os.path.join('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/', timestamp)
     os.makedirs(save_dir, exist_ok=True)
 
+    total_epochs = 400
     # Build model, dataloaders, optimizer
-    # model = build_model(input_size=3, output_size=3)
     model= TCNGaussian()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
-    optimizer = Adam(model.parameters(), lr=1e-5)
+    
+    # 1) Optimizer with weight decay
+    optimizer = torch.optim.AdamW(
+        model.parameters(), 
+        lr=1e-5, 
+        weight_decay=1e-6
+    )
+
+    # 2) Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, 
+        max_lr=1e-5, 
+        steps_per_epoch=len(train_loader),
+        epochs=total_epochs
+    )
 
     best_val_loss = float('inf')
     train_loss_history = []
@@ -82,8 +99,8 @@ def main():
     val_loss = 0.0
 
     # start index: 1, end index: 400
-    for epoch in tqdm(range(1, 401), unit="epoch"):
-        train_loss = train_one_epoch(model, train_loader, optimizer)
+    for epoch in tqdm(range(1, total_epochs + 1), unit="epoch"):
+        train_loss = train_one_epoch(model, train_loader, optimizer, scheduler)
         val_loss = validate(model, val_loader)
 
         train_loss_history.append(np.clip(train_loss, -MAX_LOSS, MAX_LOSS))

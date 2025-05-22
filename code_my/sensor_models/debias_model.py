@@ -6,7 +6,6 @@ from typing import Tuple, Sequence, Optional, Callable
 
 class CausalConv1d(nn.Module):
     __constants__ = ['_pad']
-
     def __init__(
         self,
         in_channels: int,
@@ -32,8 +31,6 @@ class CausalConv1d(nn.Module):
         return out
 
 class TemporalBlock(nn.Module):
-    __constants__ = ['downsample']
-
     def __init__(
         self,
         in_ch: int,
@@ -101,10 +98,10 @@ class TemporalConvNet(nn.Module):
 class TCNGaussian(nn.Module):
     def __init__(
         self,
-        input_size: int = 4,
+        input_size: int = 3,
         output_size: int = 3,
-        num_channels: Sequence[int] = (32, 32, 64, 64, 128, 128, 256, 256),
-        kernel_size: int = 3,
+        num_channels: Sequence[int] = (32, 32, 64, 128, 128, 256, 256),
+        kernel_size: int = 5,
         dropout: float = 0.2,
         activation: Callable[[], nn.Module] = nn.Mish,
         eps: float = 1e-4
@@ -117,7 +114,7 @@ class TCNGaussian(nn.Module):
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         features = self.tcn(x)
-        last = features[..., -1]
+        last = features[:, :, -1]
         out = self.head(last)
         mu, raw_var = out.chunk(2, dim=1)
         var = self.softplus(raw_var)
