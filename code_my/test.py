@@ -10,6 +10,7 @@ from sensor_models.debias_model import TCNGaussian
 from sensor_models.debias_mlp_model import MLPGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 from torch.utils.data import DataLoader
+# from torch.nn.utils import remove_weight_norm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -19,7 +20,7 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-20_15-15/best_epoch_641_loss_-1.1516.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-21_15-50/best_epoch_482_loss_-1.8652.pt',
                               )
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -40,8 +41,14 @@ test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
 
 model = TCNGaussian()
 model.to(device)
-
-
+# torchscript
+# for name, module in model.named_modules():
+#     try:
+#         remove_weight_norm(module, 'weight')
+#         print(f"[removed] {name}.weight")
+#     except ValueError:
+#         pass
+model = torch.jit.script(model)
 model.load_state_dict(model_state_dict)
 model = model.to(device)
 

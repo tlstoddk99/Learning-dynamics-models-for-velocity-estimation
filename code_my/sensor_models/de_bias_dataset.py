@@ -26,7 +26,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         self,
         df: pd.DataFrame,
         input_seq_len: int = 500,
-        pred_seq_len: int = 100,
+        pred_seq_len: int = 500,
         step: int = 10,
         run_ids: list = None,
         dt: float = 0.01,
@@ -149,7 +149,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         ay_bias = np.zeros(n)
         r_bias  = np.zeros(n)
         # Segment-wise average
-        for start in range(0, n, pred_len):
+        for start in range(0, n, self.step):
             end = min(start + pred_len, n)
             ax_b = run_df["ax_imu"].iloc[start:end].mean() - ax_true[start:end].mean()
             ay_b = run_df["ay_imu"].iloc[start:end].mean() - ay_true[start:end].mean()

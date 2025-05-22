@@ -22,15 +22,7 @@ np.random.seed(42)
 torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
-
-
-
-def build_model(input_size: int, output_size: int) -> torch.nn.Module:
-    model = TCNGaussian()      
-    return model.to(device)
-
-
-def get_dataloader(df, save_path):
+def get_dataloader(df):
     # Prepare train/validation datasets
     train_ids, val_ids = [10, 12, 23, 27, 28, 29, 31, 32], [0, 2, 6, 7, 13, 18]
     train_ds = DeBiasDataset(df, run_ids=train_ids, device=device)
@@ -40,10 +32,9 @@ def get_dataloader(df, save_path):
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False)
 
-
     return train_loader, val_loader
-  
-def train_one_epoch(model, dataloader, optimizer, device):
+
+def train_one_epoch(model, dataloader, optimizer):
     model.train()
     losses = []
     for inputs,targets in dataloader:
@@ -57,7 +48,7 @@ def train_one_epoch(model, dataloader, optimizer, device):
     return np.mean(losses)
 
 
-def validate(model, dataloader, device):
+def validate(model, dataloader):
     model.eval()
     losses = []
     with torch.no_grad():
@@ -77,8 +68,10 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Build model, dataloaders, optimizer
-    model = build_model(input_size=3, output_size=3)
-    train_loader, val_loader = get_dataloader(df, save_dir)
+    # model = build_model(input_size=3, output_size=3)
+    model= TCNGaussian()
+    model.to(device)
+    train_loader, val_loader = get_dataloader(df)
     optimizer = AdamW(model.parameters(), lr=1e-5)
 
     best_val_loss = float('inf')
@@ -89,10 +82,10 @@ def main():
     train_loss = 0.0
     val_loss = 0.0
 
-    # start index: 1, end index: 1000
-    for epoch in tqdm(range(1, 1001), unit="epoch"):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device=device)
-        val_loss = validate(model, val_loader, device=device)
+    # start index: 1, end index: 400
+    for epoch in tqdm(range(1, 401), unit="epoch"):
+        train_loss = train_one_epoch(model, train_loader, optimizer)
+        val_loss = validate(model, val_loader)
 
         train_loss_history.append(np.clip(train_loss, -MAX_LOSS, MAX_LOSS))
         val_loss_history.append(np.clip(val_loss,   -MAX_LOSS, MAX_LOSS))
