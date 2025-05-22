@@ -11,7 +11,6 @@ from tqdm import tqdm
 
 # Local imports
 from sensor_models.debias_model import TCNGaussian
-from sensor_models.debias_mlp_model import MLPGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -72,7 +71,7 @@ def main():
     model= TCNGaussian()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
-    optimizer = AdamW(model.parameters(), lr=1e-5)
+    optimizer = Adam(model.parameters(), lr=1e-5)
 
     best_val_loss = float('inf')
     train_loss_history = []

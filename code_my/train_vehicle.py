@@ -30,12 +30,6 @@ def gnll_loss(mean: torch.Tensor, var: torch.Tensor, target: torch.Tensor, eps: 
 
 
 def build_model(input_size: int, output_size: int) -> torch.nn.Module:
-    # model = TCNGaussian(
-    #     input_size=3,
-    #     output_size=3,
-    #     dropout=0.2,
-    #     activation=torch.nn.SiLU
-    # )
     tire_model = PacejkaTireModel(vehicle_parameters=SingleTrackParameters())
     vehicle_model = SingleTrackPacejkaModel(
         tire_model=tire_model,

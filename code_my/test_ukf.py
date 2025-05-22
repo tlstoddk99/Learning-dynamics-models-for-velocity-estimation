@@ -20,7 +20,7 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-21_15-50/best_epoch_482_loss_-1.8652.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-22_15-30/best_epoch_256_loss_-1.0211.pt',
                               )
 timestamp = time.strftime('%m-%d_%H-%M')
 

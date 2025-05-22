@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 class DeBiasDataset(torch.utils.data.Dataset):
     """
     A dataset that uses the past 5 seconds (500 samples) of IMU and wheel speed data as input,
-    and predicts the average IMU biases (ax, ay, yaw-rate) and average friction coefficient
+    and predicts the average IMU biases (ax, ay, yaw-rate)
     over the next 1 second (100 samples).
 
     Input DataFrame columns:
@@ -36,25 +36,28 @@ class DeBiasDataset(torch.utils.data.Dataset):
     ):
         self.input_seq_len = input_seq_len
         self.pred_seq_len = pred_seq_len
+        self.step = step
         self.dt = dt
         self.dtype = dtype
         self.device = device
         self.run_ids = run_ids
         self.plot = plot
-        self.step = step
 
-        # Fill missing values
+
+        # 1) Fill missing values and split runs
         df = self._fill_na(df)
-        # Split DataFrame by run
         runs = self._split_runs(df)
-        # Optionally plot IMU biases per run
-        for run_id, run_df in runs.items():
-            if plot and len(run_df) > self.input_seq_len + self.pred_seq_len:
-                print(f"run {run_id}: {len(run_df)} samples")
-                self.plot_imu(run_df)
+        
+        # 2) Optional: visualize biases per run
+        if plot:
+            for run_id, run_df in runs.items():
+                if len(run_df) > self.input_seq_len + self.pred_seq_len:
+                    print(f"Run {run_id}: {len(run_df)} samples")
+                    self.plot_imu(run_df)
 
         # Generate inputs and targets
         inputs, targets = self._generate_samples(runs)
+        
         # Convert to torch tensors
         self.inputs = torch.tensor(
             np.stack(inputs), dtype=self.dtype, device=self.device
@@ -84,12 +87,11 @@ class DeBiasDataset(torch.utils.data.Dataset):
     def _preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
         a_scale = 50
         w_scale = 7
-        df["ax_imu"] = np.clip(df["ax_imu"], -a_scale, a_scale)
-        df["ay_imu"] = np.clip(df["ay_imu"], -a_scale, a_scale)
-        df["r_imu"]  = np.clip(df["r_imu"], -w_scale, w_scale)
-        df["ax_imu"] = (df["ax_imu"] + a_scale) / (2 * a_scale)
-        df["ay_imu"] = (df["ay_imu"] + a_scale) / (2 * a_scale)
-        df["r_imu"]  = (df["r_imu"] + w_scale) / (2 * w_scale)
+        wheel_scale = 7
+        df["ax_imu"] = np.clip(df["ax_imu"], -a_scale, a_scale)/a_scale
+        df["ay_imu"] = np.clip(df["ay_imu"], -a_scale, a_scale)/a_scale
+        df["r_imu"]  = np.clip(df["r_imu"], -w_scale, w_scale)/w_scale
+        df["omega_wheels"] = (np.clip(df["omega_wheels"], 0, wheel_scale)-(wheel_scale/2))/(wheel_scale/2)
         return df
 
     def _generate_samples(self, runs: dict) -> tuple:
@@ -111,7 +113,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
         return inputs, targets
 
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        cols = ["ax_imu", "ay_imu", "r_imu"]
+        cols = ["ax_imu", "ay_imu", "r_imu", "omega_wheels"]
         input_df = self._preprocess_data(df.copy())
         data = input_df.loc[start : start + self.input_seq_len - 1, cols].values
         return data.T
@@ -121,7 +123,8 @@ class DeBiasDataset(torch.utils.data.Dataset):
             start + self.input_seq_len :
             start + self.input_seq_len + self.pred_seq_len - 1
         ]
-        mean_ax, mean_ay, mean_r = self._compute_mean_biases(pred)
+        mean_ax, mean_ay, mean_r = self._compute_mean_biases(pred) 
+        
         return [mean_ax, mean_ay, mean_r]
 
     def _compute_mean_biases(self, pred: pd.DataFrame) -> tuple:
@@ -196,16 +199,17 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_train_and_val.csv")
-    dataset = DeBiasDataset(df, plot=True)
-    print(f"dataset shape: {df.shape}")
-    print(f"inputs shape: {dataset.inputs.shape}")
-    print(f"targets shape: {dataset.targets.shape}")
-    print(f"inputs: {dataset.inputs[0, :, :]}")
-    print(f"targets: {dataset.targets[0, :]}")
+    dataset = DeBiasDataset(df, plot=False)
+    # print(f"dataset shape: {df.shape}")
+    # print(f"inputs shape: {dataset.inputs.shape}")
+    # print(f"targets shape: {dataset.targets.shape}")
+    # print(f"inputs: {dataset.inputs[0, :, :]}")
+    # print(f"targets: {dataset.targets[0, :]}")
     print()
     print(f"minmax ax_imu: {dataset.inputs[:, 0, :].min()}, {dataset.inputs[:, 0, :].max()}")
     print(f"minmax ay_imu: {dataset.inputs[:, 1, :].min()}, {dataset.inputs[:, 1, :].max()}")
     print(f"minmax r_imu: {dataset.inputs[:, 2, :].min()}, {dataset.inputs[:, 2, :].max()}")
+    print(f"minmax wheel: {dataset.inputs[:, 3, :].min()}, {dataset.inputs[:, 3, :].max()}")
     print()
     print(f"minmax ax_bias: {dataset.targets[:, 0].min()}, {dataset.targets[:, 0].max()}")
     print(f"minmax ay_bias: {dataset.targets[:, 1].min()}, {dataset.targets[:, 1].max()}")

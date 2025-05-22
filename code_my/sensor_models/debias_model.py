@@ -101,7 +101,7 @@ class TemporalConvNet(nn.Module):
 class TCNGaussian(nn.Module):
     def __init__(
         self,
-        input_size: int = 3,
+        input_size: int = 4,
         output_size: int = 3,
         num_channels: Sequence[int] = (32, 32, 64, 64, 128, 128, 256, 256),
         kernel_size: int = 3,
@@ -123,9 +123,10 @@ class TCNGaussian(nn.Module):
         var = self.softplus(raw_var)
         return mu, var
 
-    def loss_function(self, mu: Tensor, var: Tensor, target: Tensor) -> Tensor:
+    def loss_function(
+        self,
+        mu: Tensor,
+        var: Tensor,
+        target: Tensor
+    ) -> Tensor:
         return F.gaussian_nll_loss(mu, target, var, eps=self.eps, full=True)
-
-# Usage:
-# model = TCNGaussian()
-# scripted = torch.jit.script(model)
