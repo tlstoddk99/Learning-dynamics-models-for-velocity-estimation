@@ -26,8 +26,8 @@ class DeBiasDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         df: pd.DataFrame,
-        input_seq_len: int = 500,
-        pred_seq_len: int = 100,
+        input_seq_len: int = 200,
+        pred_seq_len: int = 1,
         step: int = 10,
         run_ids: list = None,
         dt: float = 0.01,
@@ -200,7 +200,7 @@ class DeBiasDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code/opti_test/hoons_all_train_and_val.csv")
-    dataset = DeBiasDataset(df, plot=False)
+    dataset = DeBiasDataset(df, plot=True)
     # print(f"dataset shape: {df.shape}")
     # print(f"inputs shape: {dataset.inputs.shape}")
     # print(f"targets shape: {dataset.targets.shape}")

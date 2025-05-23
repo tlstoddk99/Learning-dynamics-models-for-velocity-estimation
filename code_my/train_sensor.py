@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # Local imports
-from sensor_models.debias_model import TCNGaussian
-# from sensor_models.de_bias_dataset import DeBiasDataset
-from sensor_models.de_bias_dataset_lpf import DeBiasDatasetLpf, preprocess_df
+from sensor_models.debias_model import IMUDebiasNet
+from sensor_models.imu_model import GaussianTCNForecaster
+from sensor_models.imu_dataset import IMUDataset, preprocess_df, normalize_imu
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -25,9 +25,10 @@ torch.cuda.manual_seed_all(42)
 def get_dataloader(df):
     # Prepare train/validation datasets
     df = preprocess_df(df)
+
     train_ids, val_ids = [10, 12, 23, 27, 28, 29, 31, 32], [0, 2, 6, 7, 13, 18]
-    train_ds = DeBiasDatasetLpf(df, run_ids=train_ids, device=device)
-    val_ds   = DeBiasDatasetLpf(df, run_ids=val_ids,   device=device)
+    train_ds = IMUDataset(df, run_ids=train_ids, device=device)
+    val_ds   = IMUDataset(df, run_ids=val_ids,   device=device)
 
     # Build DataLoaders
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
@@ -69,23 +70,24 @@ def main():
     save_dir = os.path.join('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/', timestamp)
     os.makedirs(save_dir, exist_ok=True)
 
-    total_epochs = 400
+    total_epochs = 2000
     # Build model, dataloaders, optimizer
-    model= TCNGaussian()
+    # model= TCNGaussian()
+    model = IMUDebiasNet()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
     
     # 1) Optimizer with weight decay
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=1e-5, 
+        lr=1e-3, 
         weight_decay=1e-6
     )
 
     # 2) Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, 
-        max_lr=1e-5, 
+        max_lr=1e-3, 
         steps_per_epoch=len(train_loader),
         epochs=total_epochs
     )

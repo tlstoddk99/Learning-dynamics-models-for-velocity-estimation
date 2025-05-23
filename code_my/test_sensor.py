@@ -6,8 +6,9 @@ import torch
 import pickle
 from sklearn.preprocessing import StandardScaler
 from sensor_models.debias_model import TCNGaussian
+from sensor_models.imu_model import LiteTCNGaussian
 from sensor_models.de_bias_dataset import DeBiasDataset
-from sensor_models.de_bias_dataset_lpf import DeBiasDatasetLpf, preprocess_df
+from sensor_models.imu_dataset import IMUDataset, preprocess_df, denormalize_imu
 from torch.utils.data import DataLoader
 
 
@@ -19,7 +20,7 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-23_00-21/best_epoch_169_loss_1.0351.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-23_17-46/best_epoch_994_loss_-2.9642.pt',
                               )
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -29,17 +30,15 @@ np.random.seed(42)
 torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
-# test_dateset = DeBiasDataset(
-#         df,
-#         device=device
-#     )
+
 
 df = preprocess_df(df)
-test_dateset = DeBiasDatasetLpf(df,device=device)
+test_dateset = IMUDataset(df,device=device)
 test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
 
 
-model = TCNGaussian()
+# model = TCNGaussian()
+model = LiteTCNGaussian()
 model.to(device)
 model = torch.jit.script(model)
 model.load_state_dict(model_state_dict)
@@ -59,21 +58,42 @@ with torch.no_grad():
         mu, var = model(inputs)
         time1 = time.time()
         
-        mu = mu.cpu().numpy().flatten()
-        var = var.cpu().numpy().flatten()
-        targets = targets.cpu().numpy().flatten()
-        
-        std= np.sqrt(var)
+       # GPU → CPU → numpy, 유지하고 싶은 차원만 flatten 하지 않기
+        mu_np     = mu .cpu().numpy()    # shape (B,3)
+        var_np    = var.cpu().numpy()    # shape (B,3)
+        targ_np   = targets.cpu().numpy()# shape (B,3)
+
+        # ----- Denormalize -----
+        # 1) model 예측
+        ax_mu, ay_mu, r_mu = denormalize_imu(mu_np[:,0],
+                                             mu_np[:,1],
+                                             mu_np[:,2])
+        mu_denorm = np.stack([ax_mu, ay_mu, r_mu], axis=1).flatten()  # (B,3)
+
+        # 2) 실제 타겟
+        ax_t, ay_t, r_t = denormalize_imu(targ_np[:,0],
+                                          targ_np[:,1],
+                                          targ_np[:,2])
+        targ_denorm = np.stack([ax_t, ay_t, r_t], axis=1).flatten()  # (B,3)
+
+        # 3) 불확실성: var → std → denormalize
+        std_np = np.sqrt(var_np)   # (B,3)
+        ax_s, ay_s, r_s = denormalize_imu(std_np[:,0],
+                                          std_np[:,1],
+                                          std_np[:,2])
+        std_denorm = np.stack([ax_s, ay_s, r_s], axis=1).flatten()  # (B,3)
+       
 
         # 3 sigma rule: 99.73% of the data
         # 2 sigma rule: 95.45% of the data
         # 1 sigma rule: 68.27% of the data
-        uncertainty = 2*std
+        uncertainty = 2 * std_denorm   # (B,3)
+        
 
         results.append({
-            'prediction': mu,
-            'target': targets,
-            'error': (mu - targets),
+            'prediction': mu_denorm,
+            'target': targ_denorm,
+            'error': (mu_denorm - targ_denorm),
             'uncertainty': uncertainty,
         })
         
@@ -83,7 +103,6 @@ with torch.no_grad():
 
 #plot the results
 #[ax,ay,r,wheel_speed]
-
 # Define your metrics in order
 # metrics = ['ax', 'ay', 'r', 'wheel_speed']
 metrics = ['ax_bias', 'ay_bias', 'r_bias']

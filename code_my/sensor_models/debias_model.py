@@ -1,129 +1,83 @@
 import torch
-from torch import Tensor
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Tuple, Sequence, Optional, Callable
 
-class CausalConv1d(nn.Module):
-    __constants__ = ['_pad']
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        dilation: int = 1
-    ) -> None:
+def conv1d_bn_relu(in_channels, out_channels, kernel_size=3, padding=1):
+    """Helper: Conv1d + BatchNorm1d + ReLU"""
+    return nn.Sequential(
+        nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding),
+        nn.BatchNorm1d(out_channels),
+        nn.ReLU(inplace=True)
+    )
+
+class ResidualBlock1D(nn.Module):
+    """A single 1D ResNet block: Conv-BN-ReLU-Conv-BN plus skip connection."""
+    def __init__(self, channels):
         super().__init__()
-        padding = (kernel_size - 1) * dilation
-        self.conv = nn.Conv1d(
-            in_channels,
-            out_channels,
-            kernel_size=kernel_size,
-            dilation=dilation,
-            padding=padding
+        self.block = nn.Sequential(
+            nn.Conv1d(channels, channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(channels, channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(channels)
         )
-        self._pad = padding
+        self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x: Tensor) -> Tensor:
-        out = self.conv(x)
-        if self._pad > 0:
-            return out[..., :-self._pad]
-        return out
+    def forward(self, x):
+        out = self.block(x)
+        out = out + x  # residual
+        return self.relu(out)
 
-class TemporalBlock(nn.Module):
-    def __init__(
-        self,
-        in_ch: int,
-        out_ch: int,
-        kernel_size: int,
-        dilation: int,
-        dropout: float,
-        activation: Callable[[], nn.Module]
-    ) -> None:
+class IMUDebiasNet(nn.Module):
+    """
+    IMU De-Bias Network (1D ResNet).
+    For both accelerometer and gyroscope biases.
+
+    Input: (batch, 3, seq_len)
+    Outputs:
+      bias    -> (batch, 3)   : estimated bias per axis
+      zeta    -> (batch, 3)   : network output ζ, used to compute variance Σ² = exp(2ζ)
+    """
+    def __init__(self, in_channels=3, hidden_channels=32):
         super().__init__()
-        self.conv1 = CausalConv1d(in_ch, out_ch, kernel_size, dilation)
-        self.gn1 = nn.GroupNorm(num_groups=8, num_channels=out_ch)
-        self.act1 = activation()
-        self.drop1 = nn.Dropout(dropout)
+        # initial projection
+        self.encoder = nn.Sequential(
+            conv1d_bn_relu(in_channels, hidden_channels),
+            ResidualBlock1D(hidden_channels)
+        )
+        # global avg pool
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+        # bias head
+        self.fc_bias = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, in_channels)
+        )
+        # zeta head
+        self.fc_zeta = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, in_channels)
+        )
 
-        self.conv2 = CausalConv1d(out_ch, out_ch, kernel_size, dilation)
-        self.gn2 = nn.GroupNorm(num_groups=8, num_channels=out_ch)
-        self.act2 = activation()
-        self.drop2 = nn.Dropout(dropout)
-
-        if in_ch != out_ch:
-            self.downsample = nn.Conv1d(in_ch, out_ch, 1)
-        else:
-            self.downsample: Optional[nn.Conv1d] = None
-        self.final_act = nn.Mish()
-
-    def forward(self, x: Tensor) -> Tensor:
-        out = self.conv1(x)
-        out = self.gn1(out)
-        out = self.act1(out)
-        out = self.drop1(out)
-
-        out = self.conv2(x if False else out)
-        out = self.gn2(out)
-        out = self.act2(out)
-        out = self.drop2(out)
-
-        res = x if self.downsample is None else self.downsample(x)
-        return self.final_act(out + res)
-
-class TemporalConvNet(nn.Module):
-    def __init__(
-        self,
-        num_inputs: int,
-        num_channels: Sequence[int],
-        kernel_size: int = 3,
-        dropout: float = 0.2,
-        activation: Callable[[], nn.Module] = nn.Mish
-    ) -> None:
-        super().__init__()
-        layers: list[nn.Module] = []
-        for i, out_ch in enumerate(num_channels):
-            in_ch = num_inputs if i == 0 else num_channels[i-1]
-            dilation = 2 ** i
-            layers.append(
-                TemporalBlock(in_ch, out_ch, kernel_size, dilation, dropout, activation)
-            )
-        self.layers = nn.ModuleList(layers)
-
-    def forward(self, x: Tensor) -> Tensor:
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
-class TCNGaussian(nn.Module):
-    def __init__(
-        self,
-        input_size: int = 3,
-        output_size: int = 3,
-        num_channels: Sequence[int] = (32, 32, 64, 128, 128, 256, 256),
-        kernel_size: int = 5,
-        dropout: float = 0.2,
-        activation: Callable[[], nn.Module] = nn.Mish,
-        eps: float = 1e-4
-    ) -> None:
-        super().__init__()
-        self.eps = eps
-        self.tcn = TemporalConvNet(input_size, num_channels, kernel_size, dropout, activation)
-        self.head = nn.Linear(num_channels[-1], output_size * 2)
-        self.softplus = nn.Softplus()
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        features = self.tcn(x)
-        last = features[:, :, -1]
-        out = self.head(last)
-        mu, raw_var = out.chunk(2, dim=1)
-        var = self.softplus(raw_var)
-        return mu, var
-
-    def loss_function(
-        self,
-        mu: Tensor,
-        var: Tensor,
-        target: Tensor
-    ) -> Tensor:
-        return F.gaussian_nll_loss(mu, target, var, eps=self.eps, full=True)
+    def forward(self, x):
+        # x: [B, 3, T]
+        h = self.encoder(x)           # [B, hidden, T]
+        h = self.global_pool(h).squeeze(-1)  # [B, hidden]
+        bias = self.fc_bias(h)       # [B, 3]
+        zeta = self.fc_zeta(h)       # [B, 3]
+        return bias, zeta
+    
+    def loss_function(self, mu, zeta, target):
+       # mu, zeta, target: [B, D]
+        # variance: Σ² = exp(2ζ)
+        sigma2 = torch.exp(2.0 * zeta)             # [B, D]
+        # log det Σ² = sum_d log σ²_d = 2 sum_d ζ_d
+        logdet = 2.0 * zeta.sum(dim=-1)           # [B]
+        # Mahalanobis term: (μ - y)^T Σ^{-1} (μ - y)
+        diff = mu - target
+        mahal = (diff.pow(2) / sigma2).sum(dim=-1) # [B]
+        # per-sample NLL
+        nll = 0.5 * (logdet + mahal)
+        return nll.mean()
+      
+      
