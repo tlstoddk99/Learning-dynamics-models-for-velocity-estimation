@@ -1,5 +1,5 @@
 import torch
-from typing import Tuple
+
 
 class UKF:
     def __init__(self, state_dim: int, meas_dim: int, device, kappa=-2.0):
@@ -18,43 +18,31 @@ class UKF:
 
         self.device = device
 
-    def predict(self,
-                X: torch.Tensor,
-                P: torch.Tensor,
-                Q: torch.Tensor,
-                state_transition_func,
-                u: torch.Tensor
-               ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(self, X, P, Q, state_transition_func, *args):
         """
-        X: [batch, state_dim]
-        P: [batch, state_dim, state_dim]
-        Q: [batch, state_dim, state_dim]
-        u: [batch, control_dim]
+        Predict the next state.
+        X: State estimate [batch, state_dim]
+        P: State covariance [batch, state_dim, state_dim]
+        state_transition_func: Function to propagate state
         """
         assert X.shape[-1] == self.state_dim
         assert P.shape[-1] == self.state_dim
 
         sigma_points = self._generate_sigma_points(X, P)
-        sigma_points_prop = state_transition_func(sigma_points)
+        sigma_points_prop = state_transition_func(sigma_points, *args)
         assert sigma_points_prop.shape == sigma_points.shape
 
         X_pred, P_pred = self._recover_gaussian(sigma_points_prop)
         P_pred = P_pred + Q
         return X_pred, P_pred
 
-    def update(self,
-               X_pred: torch.Tensor,
-               P_pred: torch.Tensor,
-               Z: torch.Tensor,
-               R: torch.Tensor,
-               measurement_func,
-               u: torch.Tensor
-              ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def update(self, X_pred, P_pred, Z, R, measurement_func, *args):
         """
-        X_pred: [batch, state_dim]
-        P_pred: [batch, state_dim, state_dim]
-        Z: [batch, meas_dim]
-        u: [batch, control_dim]
+        Update state estimate and covariance.
+        X_pred: Predicted state estimate [batch, state_dim]
+        P_pred: Predicted state covariance [batch, state_dim, state_dim]
+        Z: Measurement [batch, meas_dim]
+        measurement_func: Function to convert state to measurement
         """
         assert X_pred.shape[-1] == self.state_dim
         assert P_pred.shape[-1] == self.state_dim
@@ -62,7 +50,7 @@ class UKF:
 
         sigma_points = self._generate_sigma_points(X_pred, P_pred)
 
-        sigma_points_meas = measurement_func(sigma_points)
+        sigma_points_meas = measurement_func(sigma_points, *args)
 
         z_pred, Pz = self._recover_gaussian(sigma_points_meas)
         Pxz = self._cross_covariance(

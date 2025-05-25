@@ -1,57 +1,57 @@
 import torch
 import torchdiffeq as ode
 from robot_models.single_track_pacejka import observation
-from filters.ukf import UKF
+from code_my.filters.ukf_origin import UKF
 import numpy as np
 from typing import Dict
 
 
 class UKFModelStepperInference(torch.nn.Module):
-
-    def __init__(self, model, noise_model, dt, solver_settngs, q_entr_lb, state_dim=5,
+    def __init__(self, model, noise_model, dt, state_dim=5,
                  device=torch.device("cpu")) -> None:
         super().__init__()
         self.noise_model = noise_model
         self.model = model
-        self.solver_settngs = solver_settngs
         self.dt = dt
         self.state_dim = state_dim
+        self.atol = 1e-6
+        self.rtol = 1e-5
+        self.method = "rk4"
+        self.step_size = dt
+        self.backprop_adjoint = False
+        
         self.device = device
-        self.q_entr_lb = torch.tensor(q_entr_lb)
         self.ukf = UKF(state_dim, meas_dim=4, device=device)
         pass
 
-    def _state_transition_func(self, x, *args):
+    def _state_transition_func(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """
-        x: [batch_size, sigma,  state_dim]
+        x: [batch, sigma, state_dim]
+        u: [batch, control_dim]
         """
-        ur = args[0].unsqueeze(1).repeat(1, x.shape[1], 1)
+        ur = u.unsqueeze(1).repeat(1, x.shape[1], 1)
         xu = torch.cat((x, ur), dim=-1)
-        x_next = ode.odeint(self.model, xu, self.dt, **self.solver_settngs)[-1]
+        x_next = ode.odeint(
+            self.model,
+            xu,
+            self.dt,
+            rtol=self.rtol,
+            atol=self.atol,
+            method=self.method,
+            options={"step_size": self.step_size},
+            backprop_adjoint=self.backprop_adjoint
+        )[-1]
         x_next = x_next[..., : self.state_dim]
         return x_next
 
-    def _observation_func(self, x, *args):
+    def _observation_func(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """
-        x: [batch_size, sigma,  state_dim]
+        x: [batch, sigma, state_dim]
+        u: [batch, control_dim]
         """
-        ur = args[0].unsqueeze(1).repeat(1, x.shape[1], 1)
+        ur = u.unsqueeze(1).repeat(1, x.shape[1], 1)
         xu = torch.cat((x, ur), dim=-1)
         return observation(self.model, xu)
-
-    def calc_normal_entropy(self, M):
-        D = M.shape[-1]
-        return 0.5 * D * (1 + torch.log(torch.tensor([2 * torch.pi]))) + 0.5 * torch.logdet(M)
-
-    def project_entropy(self, M, lower_bound):
-        M2 = M.clone()
-        D = M.shape[-1]
-        ent = self.calc_normal_entropy(M)
-        indexes_to_project = ent < lower_bound
-        proj_scaler = torch.exp((lower_bound - ent[indexes_to_project]) / D)
-        proj_scaler = proj_scaler.unsqueeze(-1).unsqueeze(-1)
-        M2[indexes_to_project, :, :] = proj_scaler * M[indexes_to_project, :, :]
-        return M2
 
     def forward(self, X_hat, P, u, y, X_GT=None):
         """

@@ -11,7 +11,8 @@ from tqdm import tqdm
 
 # Local imports
 from sensor_models.debias_model import IMUDebiasNet
-from sensor_models.imu_model import GaussianTCNForecaster
+from sensor_models.imu_model import GaussianTCN
+from sensor_models.imu_model_gru import GaussianGRU
 from sensor_models.imu_dataset import IMUDataset, preprocess_df, normalize_imu
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -70,24 +71,25 @@ def main():
     save_dir = os.path.join('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/', timestamp)
     os.makedirs(save_dir, exist_ok=True)
 
-    total_epochs = 2000
+    total_epochs = 200
     # Build model, dataloaders, optimizer
-    # model= TCNGaussian()
-    model = IMUDebiasNet()
+    # model= GaussianTCN()
+    # model = IMUDebiasNet()
+    model = GaussianGRU()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
     
     # 1) Optimizer with weight decay
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=1e-3, 
+        lr=1e-5, 
         weight_decay=1e-6
     )
 
     # 2) Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, 
-        max_lr=1e-3, 
+        max_lr=1e-5, 
         steps_per_epoch=len(train_loader),
         epochs=total_epochs
     )

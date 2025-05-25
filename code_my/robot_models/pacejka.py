@@ -1,7 +1,5 @@
 import torch
-from tire_models.base import BaseTireModel
-from utils.state_wrapper import STATE_DEF_LIST, StateWrapper
-
+from base import BaseTireModel
 
 class PacejkaTireModel(BaseTireModel):
     def __init__(self, vehicle_parameters):
@@ -30,7 +28,7 @@ class PacejkaTireModel(BaseTireModel):
         return self.vhp.m * self.vhp.g * self.long_mu_tire * torch.sin(self.long_C * torch.atan(self.long_B * slip_ratio))
 
     def forward(self, x):
-        wx = StateWrapper(x)
+        # v_x, v_y, r, omega_wheels, friction, delta, Iq = torch.unbind(x, dim=-1)
 
         Fy_f_ = self.Fy_f(self.slip_angle_front_func(x))
         Fy_r_ = self.Fy_r(self.slip_angle_rear_func(x))

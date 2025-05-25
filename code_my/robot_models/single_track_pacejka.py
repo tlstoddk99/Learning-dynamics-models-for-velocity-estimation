@@ -1,49 +1,98 @@
 import torch
-from utils.state_wrapper import STATE_DEF_LIST_SHORT, StateWrapper
-import collections
+from torch import Tensor
+from torch.nn import Module
 
 
-class SingleTrackPacejkaModel(torch.nn.Module):
+class SingleTrackPacejkaModel(Module):
+    """
+    Single-track vehicle model using a Pacejka tire model.
+    """
 
-    def __init__(self, vehicle_parameters: torch.nn.Module, tire_model: torch.nn.Module) -> None:
-        super(SingleTrackPacejkaModel, self).__init__()
+    def __init__(self, vehicle_parameters: Module, tire_model: Module) -> None:
+        super().__init__()
+        self.p = vehicle_parameters  # type: ignore[attr-defined]
         self.tire_model = tire_model
-        self.p = vehicle_parameters
 
-    def forward(self, t, x):
-        p = self.p
-        wx = StateWrapper(x)
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [..., 7] = [v_x, v_y, r, omega_wheels, friction, delta, Iq]
+        v_x, v_y, r, omega_wheels, friction, delta, Iq = torch.unbind(x, dim=-1)
 
-        Fy_f, Fy_r, Fx_f, Fx_r = torch.unbind(self.tire_model(x), dim=-1)
+        # Tire forces
+        tire_forces = self.tire_model(x)
+        Fy_f, Fy_r, Fx_f, Fx_r = torch.unbind(tire_forces, dim=-1)
 
-        F_drag = p.Cd0 * torch.sign(wx.v_x) +\
-            p.Cd1 * wx.v_x +\
-            p.Cd2 * wx.v_x * wx.v_x
+        # Drag force
+        F_drag = (
+            self.p.Cd0 * torch.sign(v_x)
+            + self.p.Cd1 * v_x
+            + self.p.Cd2 * v_x * v_x
+        )
 
-        v_x_dot = 1.0 / p.m * (Fx_r + Fx_f * torch.cos(wx.delta) -
-                               Fy_f * torch.sin(wx.delta) - F_drag + p.m * wx.v_y * wx.r)
+        # Dynamics
+        v_x_dot = (
+            1.0 / self.p.m
+            * (
+                Fx_r
+                + Fx_f * torch.cos(delta)
+                - Fy_f * torch.sin(delta)
+                - F_drag
+                + self.p.m * v_y * r
+            )
+        )
 
-        v_y_dot = 1.0 / p.m * (Fx_f * torch.sin(wx.delta) +
-                               Fy_r + Fy_f * torch.cos(wx.delta) - p.m * wx.v_x * wx.r)  #
+        v_y_dot = (
+            1.0 / self.p.m
+            * (
+                Fx_f * torch.sin(delta)
+                + Fy_r
+                + Fy_f * torch.cos(delta)
+                - self.p.m * v_x * r
+            )
+        )
 
-        r_dot = 1.0 / p.I_z * \
-            ((Fx_f * torch.sin(wx.delta) + Fy_f *
-             torch.cos(wx.delta)) * p.lf - Fy_r * p.lr)
+        r_dot = (
+            1.0 / self.p.I_z
+            * (
+                (Fx_f * torch.sin(delta) + Fy_f * torch.cos(delta)) * self.p.lf
+                - Fy_r * self.p.lr
+            )
+        )
 
-        omega_wheels_dot = p.R / p.I_e * (p.K_fi * wx.Iq - p.R * Fx_f - p.R * Fx_r
-                                          - wx.omega_wheels * p.b1 - torch.sign(wx.omega_wheels) * p.b0)
+        omega_wheels_dot = (
+            self.p.R / self.p.I_e
+            * (
+                self.p.K_fi * Iq
+                - self.p.R * (Fx_f + Fx_r)
+                - omega_wheels * self.p.b1
+                - torch.sign(omega_wheels) * self.p.b0
+            )
+        )
 
-        # return torch.stack([v_x_dot, v_y_dot, r_dot, omega_wheels_dot, torch.zeros_like(wx.friction), torch.zeros_like(wx.delta), torch.zeros_like(wx.Iq)], dim=-1)
-        x_dot = torch.stack(
-            [v_x_dot, v_y_dot, r_dot, omega_wheels_dot,
-             torch.zeros_like(wx.friction),torch.zeros_like(wx.delta), torch.zeros_like(wx.Iq)], dim=-1)
-        
-        return x_dot
+        zeros = torch.zeros_like(friction)
 
-def observation(model: torch.nn.Module, x: torch.Tensor):
-    x_dot = model.forward(torch.tensor(0.0), x)
-    wx = StateWrapper(x)
-    wx_dot = StateWrapper(x_dot)
-    a_x = wx_dot.v_x - wx.r * wx.v_y
-    a_y = wx_dot.v_y + wx.r * wx.v_x
-    return torch.stack([a_x, a_y, wx.r, wx.omega_wheels], dim=-1)
+        return torch.stack([
+            v_x_dot,
+            v_y_dot,
+            r_dot,
+            omega_wheels_dot,
+            zeros,
+            zeros,
+            zeros,
+        ], dim=-1)
+
+
+@torch.jit.script
+def observation(model: Module, xu: Tensor) -> Tensor:
+    """
+    Compute observation from full state.
+    Returns:
+        [a_x, a_y, r, omega_wheels]
+    """
+    x_dot = model(xu)
+    v_x, v_y, r, omega_wheels, _, _, _ = torch.unbind(xu, dim=-1)
+    v_x_dot, v_y_dot, _, _, _, _, _ = torch.unbind(x_dot, dim=-1)
+
+    a_x = v_x_dot - r * v_y
+    a_y = v_y_dot + r * v_x
+
+    return torch.stack([a_x, a_y, r, omega_wheels], dim=-1)

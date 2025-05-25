@@ -1,7 +1,5 @@
 import torch
-from tire_models.base import BaseTireModel
-from utils.state_wrapper import STATE_DEF_LIST, StateWrapper
-
+from base import BaseTireModel
 
 class NeuralPacejkaTireModel(BaseTireModel):
     def __init__(self, vehicle_parameters):
@@ -16,13 +14,14 @@ class NeuralPacejkaTireModel(BaseTireModel):
         )
 
     def forward(self, x):
-        wx = StateWrapper(x)
+        v_x, v_y, r, omega_wheels, friction, delta, Iq = torch.unbind(x, dim=-1)
+        
         sa_f = self.slip_angle_front_func(x)
         sa_r = self.slip_angle_rear_func(x)
         sr = self.slip_ratio_func(x)
         add_state = torch.stack([sa_f, sa_r, sr], dim=-1)
         x_ext = torch.cat([x[..., :-1], add_state], dim=-1)
-        F = self.state_to_forces(x_ext) * wx.friction.unsqueeze(-1)
+        F = self.state_to_forces(x_ext) * friction.unsqueeze(-1)
         Fy_f_, Fy_r_, Fx_f_, Fx_r_ = F.unbind(dim=-1)
         Fy_f_ = -1.0 * torch.nn.functional.softplus(
             Fy_f_) * torch.nn.functional.tanh(100*sa_f)

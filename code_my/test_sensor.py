@@ -5,9 +5,9 @@ import time
 import torch
 import pickle
 from sklearn.preprocessing import StandardScaler
-from sensor_models.debias_model import TCNGaussian
-from sensor_models.imu_model import LiteTCNGaussian
-from sensor_models.de_bias_dataset import DeBiasDataset
+from sensor_models.debias_model import IMUDebiasNet
+from sensor_models.imu_model import GaussianTCN
+from sensor_models.imu_model_gru import GaussianGRU
 from sensor_models.imu_dataset import IMUDataset, preprocess_df, denormalize_imu
 from torch.utils.data import DataLoader
 
@@ -20,7 +20,7 @@ df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_
 
 # Load the model state dict
 model_state_dict = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-23_17-46/best_epoch_994_loss_-2.9642.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-24_19-52/best_epoch_181_loss_-3.6847.pt',
                               )
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -33,23 +33,23 @@ torch.cuda.manual_seed_all(42)
 
 
 df = preprocess_df(df)
-test_dateset = IMUDataset(df,device=device)
-test_dataloader = DataLoader(test_dateset, batch_size=1, shuffle=False)
+test_dataset = IMUDataset(df, device=device)
+test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
 
-# model = TCNGaussian()
-model = LiteTCNGaussian()
+# model = IMUDebiasNet()
+model = GaussianTCN()
+# model = GaussianGRU()
 model.to(device)
-model = torch.jit.script(model)
+# model = torch.jit.script(model)
 model.load_state_dict(model_state_dict)
 model = model.to(device)
 
 model.eval()
 
-count = 0
 results = []
 infer_times = []
-
+count = 0
 model.eval()
 with torch.no_grad():
     for inputs,targets in test_dataloader:
@@ -96,10 +96,9 @@ with torch.no_grad():
             'error': (mu_denorm - targ_denorm),
             'uncertainty': uncertainty,
         })
-        
-        if count >2:
-            infer_times.append(time1 - time0)
-        count += 1
+
+        infer_time= np.clip(time1 - time0, 0, 0.01)  # clip to 10ms
+        infer_times.append(infer_time)
 
 #plot the results
 #[ax,ay,r,wheel_speed]
@@ -108,7 +107,7 @@ with torch.no_grad():
 metrics = ['ax_bias', 'ay_bias', 'r_bias']
 
 # Create a 2×2 grid of subplots
-fig, axs = plt.subplots(3, 1)
+fig, axs = plt.subplots(3, 1, sharex=True)
 axs = axs.flat  # flatten to a 1D iterator
 
 times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
@@ -135,7 +134,7 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
     ax.legend()
     ax.grid()
     
-fig, axs_2 =  plt.subplots(3, 1)
+fig, axs_2 =  plt.subplots(3, 1, sharex=True)
 axs_2 = axs_2.flat  # flatten to a 1D iterator
 
 for idx, (ax_2, metric) in enumerate(zip(axs_2, metrics)):
@@ -162,7 +161,7 @@ times = np.arange(0, len(infer_times) * 0.01, 0.01).tolist()
 
 plt.figure()
 plt.plot(times, infer_times)
-plt.title(f'mean inference time: {np.mean(infer_times):.4f} s')
+plt.title(f'mean inference time: {np.median(infer_times):.4f} s')
 plt.xlabel('Batch index')
 plt.ylabel('Time (s)')
 

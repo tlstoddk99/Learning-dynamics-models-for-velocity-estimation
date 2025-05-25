@@ -3,6 +3,31 @@ import pandas as pd
 import torch
 from scipy.signal import butter, filtfilt
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from scipy.stats import pearsonr
+from tqdm import tqdm
+
+# 필터 함수 정의
+def lowpass_filter(data, cutoff, fs=100, order=4):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data)
+
+def find_best_cutoff(signal, gt):
+    min_mse = float("inf")
+    cutoff_range = np.linspace(0.1, 30, 100)
+    best_cutoff = None
+    for cutoff in cutoff_range:
+        try:
+            filtered = lowpass_filter(signal, cutoff)
+            mse = mean_squared_error(gt, filtered)
+            if mse < min_mse:
+                min_mse = mse
+                best_cutoff = cutoff
+        except:
+            continue
+    return best_cutoff
 
 def normalize_imu(ax,ay,r):
     """
@@ -67,22 +92,8 @@ def preprocess_df(
         df["ay_gt"].to_numpy(),
         df["r_gt"].to_numpy()
     )
-
-    # diff = noise + bias
-    df["ax_e"] = df["ax_imu"] - df["ax_gt"]
-    df["ay_e"] = df["ay_imu"] - df["ay_gt"]
-    df["r_e"] = df["r_imu"] - df["r_gt"]
-
-    # separate noise and bias by applying LPF
-    for col in ["ax_e", "ay_e", "r_e"]:
-        df[f"{col}_b"] = filtfilt(b, a, df[col].to_numpy())
-
-    # noise = error - bias
-    df["ax_n"] = df["ax_e"] - df["ax_e_b"]
-    df["ay_n"] = df["ay_e"] - df["ay_e_b"]
-    df["r_n"] = df["r_e"] - df["r_e_b"]
-
     return df
+
 
 
 class IMUDataset(torch.utils.data.Dataset):
@@ -103,10 +114,10 @@ class IMUDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         df: pd.DataFrame,
-        input_seq_len: int = 500,
-        pred_seq_len: int = 100,
-        step: int = 100,
-        pad: int = 50,
+        input_seq_len: int = 600,
+        pred_seq_len: int = 1,
+        step: int = 1,
+        pad: int = 0,
         run_ids: list = None,
         device: torch.device = torch.device("cpu"),
     ):
@@ -160,18 +171,16 @@ class IMUDataset(torch.utils.data.Dataset):
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
         cols = ["ax_imu", "ay_imu", "r_imu"]
         data = df.loc[start : start + self.input_seq_len - 1, cols].values
-        # return data.T
-        return data
+        return data.T
+        # return data
 
     def _get_target_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        idx = start + self.input_seq_len + self.pred_seq_len - 1
-        # cols = ["ax_gt", "ay_gt", "r_gt",
-        #         "ax_e_b", "ay_e_b", "r_e_b",
-        #         "ax_n", "ay_n", "r_n"]
-        cols = ["ax_e_b", "ay_e_b", "r_e_b"]
-        # return df.loc[idx, cols].to_numpy()
-        # data = df.loc[start + self.input_seq_len : start + self.input_seq_len + self.pred_seq_len - 1, cols].values
-        data= df.loc[idx, cols].values
+        # idx = start + self.input_seq_len + self.pred_seq_len - 1
+        start_idx = start + self.input_seq_len/2
+        end_idx = start + self.input_seq_len/2-1
+        signals = ["ax_imu", "ay_imu", "r_imu"]
+        gt= ["ax_gt", "ay_gt", "r_gt"]
+        data = find_best_cutoff(df.loc[start_idx:end_idx, signals], df.loc[start_idx:end_idx, gt])
         return data
 
     def __len__(self) -> int:
@@ -245,36 +254,3 @@ class IMUDataset(torch.utils.data.Dataset):
         else:
             plt.show()
 
-            
-# Example usage
-if __name__ == "__main__":
-    # Load your DataFrame here
-    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv")
-    # #normalize IMU signals
-    # df["ax_imu"], df["ay_imu"], df["r_imu"] = normalize_imu(
-    #     df["ax_imu"].to_numpy(),
-    #     df["ay_imu"].to_numpy(),
-    #     df["r_imu"].to_numpy()
-    # )
-    
-    # Preprocess the DataFrame
-    df = preprocess_df(df)
-    
-
-    # Create the dataset
-    dataset = IMUDataset(df)
-
-    for run_id in dataset.runs.keys():
-        dataset.plot(run_id)
-    
-    # print(f"Dataset size: {len(dataset)}")
-    # print(f"Input shape: {dataset.inputs.shape}")
-    # print(f"Target shape: {dataset.targets.shape}")
-    
-    
-    # print(f"ax_imu min/max: {dataset.inputs[:, 0, :].min()}, {dataset.inputs[:, 0, :].max()}")
-    # print(f"ay_imu min/max: {dataset.inputs[:, 1, :].min()}, {dataset.inputs[:, 1, :].max()}")
-    # print(f"r_imu min/max: {dataset.inputs[:, 2, :].min()}, {dataset.inputs[:, 2, :].max()}")
-    # print(f"ax_bias min/max: {dataset.targets[:, 0].min()}, {dataset.targets[:, 0].max()}")
-    # print(f"ay_bias min/max: {dataset.targets[:, 1].min()}, {dataset.targets[:, 1].max()}")
-    # print(f"r_bias min/max: {dataset.targets[:, 2].min()}, {dataset.targets[:, 2].max()}")

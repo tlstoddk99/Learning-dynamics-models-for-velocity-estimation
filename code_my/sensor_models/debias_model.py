@@ -1,83 +1,59 @@
 import torch
 import torch.nn as nn
-
-def conv1d_bn_relu(in_channels, out_channels, kernel_size=3, padding=1):
-    """Helper: Conv1d + BatchNorm1d + ReLU"""
-    return nn.Sequential(
-        nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding),
-        nn.BatchNorm1d(out_channels),
-        nn.ReLU(inplace=True)
-    )
-
 class ResidualBlock1D(nn.Module):
-    """A single 1D ResNet block: Conv-BN-ReLU-Conv-BN plus skip connection."""
-    def __init__(self, channels):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv1d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm1d(channels),
-            nn.ReLU(inplace=True),
-            nn.Conv1d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm1d(channels)
-        )
+    def __init__(self, channels, kernel_size=3, padding=1):
+        super(ResidualBlock1D, self).__init__()
+        self.conv1 = nn.Conv1d(channels, channels, kernel_size, padding=padding)
+        self.bn1 = nn.BatchNorm1d(channels)
         self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv1d(channels, channels, kernel_size, padding=padding)
+        self.bn2 = nn.BatchNorm1d(channels)
 
     def forward(self, x):
-        out = self.block(x)
-        out = out + x  # residual
+        identity = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += identity
         return self.relu(out)
 
-class IMUDebiasNet(nn.Module):
-    """
-    IMU De-Bias Network (1D ResNet).
-    For both accelerometer and gyroscope biases.
 
-    Input: (batch, 3, seq_len)
-    Outputs:
-      bias    -> (batch, 3)   : estimated bias per axis
-      zeta    -> (batch, 3)   : network output ζ, used to compute variance Σ² = exp(2ζ)
-    """
-    def __init__(self, in_channels=3, hidden_channels=32):
-        super().__init__()
-        # initial projection
-        self.encoder = nn.Sequential(
-            conv1d_bn_relu(in_channels, hidden_channels),
-            ResidualBlock1D(hidden_channels)
-        )
-        # global avg pool
-        self.global_pool = nn.AdaptiveAvgPool1d(1)
-        # bias head
-        self.fc_bias = nn.Sequential(
-            nn.Linear(hidden_channels, hidden_channels),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_channels, in_channels)
-        )
-        # zeta head
-        self.fc_zeta = nn.Sequential(
-            nn.Linear(hidden_channels, hidden_channels),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_channels, in_channels)
-        )
+class IMUDebiasNet(nn.Module):
+    def __init__(self, base_channels=64):
+        super(IMUDebiasNet, self).__init__()
+        # initial convolution
+        self.conv1 = nn.Conv1d(in_channels=3, out_channels=base_channels,
+                               kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(base_channels)
+        self.relu = nn.ReLU(inplace=True)
+        # one residual block
+        self.resblock = ResidualBlock1D(base_channels)
+        # global pooling to reduce temporal dimension
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        # intermediate fully connected
+        self.fc = nn.Linear(base_channels, base_channels)
+        # output heads
+        self.bias_head = nn.Linear(base_channels, 3)
+        self.zeta_head = nn.Linear(base_channels, 3)
 
     def forward(self, x):
-        # x: [B, 3, T]
-        h = self.encoder(x)           # [B, hidden, T]
-        h = self.global_pool(h).squeeze(-1)  # [B, hidden]
-        bias = self.fc_bias(h)       # [B, 3]
-        zeta = self.fc_zeta(h)       # [B, 3]
-        return bias, zeta
-    
-    def loss_function(self, mu, zeta, target):
-       # mu, zeta, target: [B, D]
-        # variance: Σ² = exp(2ζ)
-        sigma2 = torch.exp(2.0 * zeta)             # [B, D]
-        # log det Σ² = sum_d log σ²_d = 2 sum_d ζ_d
-        logdet = 2.0 * zeta.sum(dim=-1)           # [B]
-        # Mahalanobis term: (μ - y)^T Σ^{-1} (μ - y)
-        diff = mu - target
-        mahal = (diff.pow(2) / sigma2).sum(dim=-1) # [B]
-        # per-sample NLL
-        nll = 0.5 * (logdet + mahal)
-        return nll.mean()
-      
-      
+
+        # conv + bn + relu
+        out = self.relu(self.bn1(self.conv1(x)))  # [B, base_channels, T]
+        # residual block
+        out = self.resblock(out)                  # [B, base_channels, T]
+        # pool to [B, base_channels, 1] -> [B, base_channels]
+        out = self.pool(out).squeeze(-1)
+        # fc + relu
+        out = self.relu(self.fc(out))             # [B, base_channels]
+        # heads
+        bias = self.bias_head(out)                # [B, 3]
+        zeta = self.zeta_head(out)            # [B, 3]
+        # enforce positive covariance diagonal via exp(2*param)
+        cov_diag = torch.exp(2 * zeta)      # [B, 3]
+        return bias, cov_diag
+
+
+    def loss_function(self, pred_bias, cov_diag, true_bias):
+        term1 = 0.5 * cov_diag.log().sum(dim=1)          # [B]
+        term2 = 0.5 * (((pred_bias - true_bias)**2) / cov_diag).sum(dim=1)  # [B]
+        return (term1 + term2).mean()
