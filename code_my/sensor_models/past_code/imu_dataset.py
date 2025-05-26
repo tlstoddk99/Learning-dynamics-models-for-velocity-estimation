@@ -1,14 +1,40 @@
 import numpy as np
 import pandas as pd
 import torch
+from scipy.signal import butter, filtfilt
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from scipy.stats import pearsonr
+from tqdm import tqdm
+
+# 필터 함수 정의
+def lowpass_filter(data, cutoff, fs=100, order=4):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return filtfilt(b, a, data)
+
+def find_best_cutoff(signal, gt):
+    min_mse = float("inf")
+    cutoff_range = np.linspace(0.1, 30, 100)
+    best_cutoff = None
+    for cutoff in cutoff_range:
+        try:
+            filtered = lowpass_filter(signal, cutoff)
+            mse = mean_squared_error(gt, filtered)
+            if mse < min_mse:
+                min_mse = mse
+                best_cutoff = cutoff
+        except:
+            continue
+    return best_cutoff
 
 def normalize_imu(ax,ay,r):
     """
     Normalize IMU signals to a range of [-1, 1]
     """
-    a_scale = 40
-    w_scale = 6
+    a_scale = 50
+    w_scale = 7
     ax = np.clip(ax, -a_scale, a_scale) / a_scale
     ay = np.clip(ay, -a_scale, a_scale) / a_scale
     r = np.clip(r, -w_scale, w_scale) / w_scale
@@ -18,66 +44,75 @@ def denormalize_imu(ax,ay,r):
     """
     Denormalize IMU signals from a range of [-1, 1]
     """
-    a_scale = 40
-    w_scale = 6
+    a_scale = 50
+    w_scale = 7
     ax = ax * a_scale
     ay = ay * a_scale
     r = r * w_scale
     return ax, ay, r
 
-def compute_ground_truth(df: pd.DataFrame) -> pd.DataFrame:
+def preprocess_df(
+    df: pd.DataFrame,
+    dt: float = 0.01,
+    lpf_cutoff: float = 2,
+    lpf_order: int = 4,
+) -> pd.DataFrame:
     """
-    각 run_id 별로 모션 캡처 속도로부터 IMU의 실제 가속도(ax_gt, ay_gt)와 각속도(r_gt)를 계산합니다.
-    계산이 불가능한 row는 제거합니다.
-    """
-    dt = 0.01
-    result = []
-    # remove outliers (training data)
+    1) Fill NaNs
+    2) Compute IMU ground truth from motion-capture velocities
+    3) Compute error signals (error = noise + bias)
+    4) Separate noise and bias by applying a low-pass filter
+    5) Compute noise and bias signals
     
-    # run_id 기준으로 그룹화
-    for run_id, group in df.groupby('run_id'):
-        group = group.sort_values(by='Unnamed: 0')  # 시간 순 정렬 (혹시 모르니 안전하게)
-        dvx = group['v_x'].diff() / dt
-        dvy = group['v_y'].diff() / dt
-        yaw = group['r']
+    """
+  
+    df = df.fillna(0)
+
+    nyquist = 0.5 / dt
+    norm_cut = lpf_cutoff / nyquist
+    b, a = butter(lpf_order, norm_cut, btype="low", analog=False)
+
+    # Compute GT IMU
+    dvx = df["v_x"].diff().fillna(0.0) / dt
+    dvy = df["v_y"].diff().fillna(0.0) / dt
+    yaw_rate = df["r"]
+    df["ax_gt"] = dvx - yaw_rate * df["v_y"]
+    df["ay_gt"] = dvy + yaw_rate * df["v_x"]
+    df["r_gt"] = yaw_rate
     
-
-        # 계산
-        ax_gt = dvx - yaw * group['v_y']
-        ay_gt = dvy + yaw * group['v_x']
-
-        group = group.copy()
-        group['ax_gt'] = ax_gt
-        group['ay_gt'] = ay_gt
-        group['r_gt'] = yaw
-
-        # NaN 제거 (주로 첫 row)
-        group = group.dropna(subset=['ax_gt', 'ay_gt'])
-
-        result.append(group)
-
-    # 전체 병합
-    return pd.concat(result, ignore_index=True)
-
-def interpolate_motion(df: pd.DataFrame, start_time: float, end_time: float) -> pd.DataFrame:
-    """
-    지정된 시간 구간(start_time ~ end_time) 동안 v_x, v_y, r 컬럼에 대해 선형 보간을 수행합니다.
-    """
-    # 보간 대상 컬럼
-    cols_to_interpolate = ['v_x', 'v_y', 'r']
-
-    # 시간 구간 필터링
-    mask = (df["Unnamed: 0"] >= start_time) & (df["Unnamed: 0"] <= end_time)
-
-    # NaN으로 마킹 (보간 처리 대상)
-    df.loc[mask, cols_to_interpolate] = None
-
-    # 선형 보간 (앞뒤 방향 모두)
-    df[cols_to_interpolate] = df[cols_to_interpolate].interpolate(method='linear', limit_direction='both')
-
+    # Normalize IMU signals
+    df["ax_imu"], df["ay_imu"], df["r_imu"] = normalize_imu(
+        df["ax_imu"].to_numpy(),
+        df["ay_imu"].to_numpy(),
+        df["r_imu"].to_numpy()
+    )
+    # Normalize GT signals
+    df["ax_gt"], df["ay_gt"], df["r_gt"] = normalize_imu(
+        df["ax_gt"].to_numpy(),
+        df["ay_gt"].to_numpy(),
+        df["r_gt"].to_numpy()
+    )
     return df
 
+
+
+
+
 class IMUDataset(torch.utils.data.Dataset):
+    """
+    Input DataFrame columns:
+        - v_x, v_y, r          : body velocities and yaw rate (motion capture)
+        - omega_wheels         : wheel speed
+        - delta, Iq            : steering angle and motor current
+        - ax_imu, ay_imu, r_imu : raw IMU measurements
+        - friction             : friction coefficient during the test segment
+        - run_id               : experiment/run ID
+
+    Arguments:
+        input_seq_len: length of the input sequence
+        pred_seq_len : length of the prediction window
+        dt           : time interval between samples
+    """
     def __init__(
         self,
         df: pd.DataFrame,
@@ -99,9 +134,6 @@ class IMUDataset(torch.utils.data.Dataset):
 
         # Generate samples
         inputs, targets = self._generate_samples()
-        if len(inputs) == 0:
-            raise ValueError("No samples found. Check if your run data is long enough or preprocessing trimmed everything.")
-        
         self.inputs = torch.tensor(np.stack(inputs), dtype=torch.float32, device=device)
         self.targets = torch.tensor(np.stack(targets), dtype=torch.float32, device=device)
 
@@ -140,17 +172,17 @@ class IMUDataset(torch.utils.data.Dataset):
 
     def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
         cols = ["ax_imu", "ay_imu", "r_imu"]
-        # cols = ["ax_imu_n", "ay_imu_n", "r_imu_n"]
         data = df.loc[start : start + self.input_seq_len - 1, cols].values
         return data.T
         # return data
 
     def _get_target_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        idx = start + self.input_seq_len + self.pred_seq_len - 2
-        cols = ["ax_gt", "ay_gt", "r_gt"]
-        # cols = ["ax_gt_n", "ay_gt_n", "r_gt_n"]
-        data = df.loc[idx, cols].values
-        data = data.reshape(-1, 1)
+        # idx = start + self.input_seq_len + self.pred_seq_len - 1
+        start_idx = start + self.input_seq_len/2
+        end_idx = start + self.input_seq_len/2-1
+        signals = ["ax_imu", "ay_imu", "r_imu"]
+        gt= ["ax_gt", "ay_gt", "r_gt"]
+        data = find_best_cutoff(df.loc[start_idx:end_idx, signals], df.loc[start_idx:end_idx, gt])
         return data
 
     def __len__(self) -> int:
@@ -224,55 +256,3 @@ class IMUDataset(torch.utils.data.Dataset):
         else:
             plt.show()
 
-if __name__ == "__main__":
-    # df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv")
-    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test.csv")
-    
-
-    # df= interpolate_motion(df, 518.54, 518.73)
-    # df =interpolate_motion(df, 439.35, 439.50)
-    # df = interpolate_motion(df, 15.36, 15.40)
-    # df = interpolate_motion(df, 236.29, 236.50)
-    
-    df = interpolate_motion(df, 30.71,30.82)
-
-    df = compute_ground_truth(df)
-    
-    # df.to_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv", index=False)
-    df.to_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv", index=False)
-
-    # print(df.head())
-
-    time = df["Unnamed: 0"].to_numpy()
-    ax_imu = df["ax_imu"].to_numpy()
-    ax_gt = df["ax_gt"].to_numpy()
-    ay_imu = df["ay_imu"].to_numpy()
-    ay_gt = df["ay_gt"].to_numpy()
-    r_imu = df["r_imu"].to_numpy()
-    r_gt = df["r_gt"].to_numpy()
-    
-    vx= df["v_x"].to_numpy()
-    vy = df["v_y"].to_numpy()
-
-    # 올바른 순서로 figure, axes 생성
-    fig, axs = plt.subplots(3, 1, sharex=True)
-
-
-    axs[0].plot(time, ax_gt, label="gt ax")
-    axs[0].set_ylabel("ax")
-
-
-    axs[1].plot(time, ay_gt, label="gt ay")
-
-    axs[1].set_ylabel("ay")
-
-    axs[2].plot(time, r_gt, label="gt r")
-    axs[2].set_ylabel("r")
-    axs[2].set_xlabel("Time (s)")
-
-    for ax in axs:
-        ax.legend()
-
-    plt.tight_layout()
-    plt.show()
-    

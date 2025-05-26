@@ -17,33 +17,6 @@ W_SCALE = 7.0     # Gyro clipping threshold
 INPUT_CSV = "/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv"
 OUTPUT_CSV = "/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_processed.csv"
 
-# ───────────────────────────────────────────────────────────────
-# Signal processing utilities
-# ───────────────────────────────────────────────────────────────
-def lowpass_filter(data: np.ndarray, cutoff: float, fs: float = FS, order: int = 4) -> np.ndarray:
-    """
-    Butterworth low-pass filter.
-    """
-    nyq = 0.5 * fs
-    b, a = butter(order, cutoff / nyq, btype='low', analog=False)
-    return filtfilt(b, a, data)
-
-def find_optimal_cutoff(
-    gt: np.ndarray,
-    meas: np.ndarray,
-    fs: float = FS,
-    cutoff_range: np.ndarray = np.linspace(0.1, 20, 100)
-) -> float:
-    """
-    주어진 측정치(meas)에 대해 GT(gt)와 MSE가 최소가 되는 컷오프 주파수를 탐색합니다.
-    """
-    best_cutoff, lowest_mse = cutoff_range[0], float('inf')
-    for fc in cutoff_range:
-        y = lowpass_filter(meas, fc, fs)
-        mse = mean_squared_error(gt, y)
-        if mse < lowest_mse:
-            best_cutoff, lowest_mse = fc, mse
-    return best_cutoff
 
 def normalize_imu(ax: np.ndarray, ay: np.ndarray, w: np.ndarray) -> tuple:
     """
