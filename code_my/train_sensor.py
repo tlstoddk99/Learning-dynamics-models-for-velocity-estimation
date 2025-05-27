@@ -31,8 +31,8 @@ def get_dataloader(df):
     val_ds   = IMUDataset(df, run_id_list=val_ids)
 
     # Build DataLoaders
-    train_loader = DataLoader(train_ds, batch_size=64, shuffle=False)
-    val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=1, shuffle=False)
+    val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False)
     
 
     return train_loader, val_loader

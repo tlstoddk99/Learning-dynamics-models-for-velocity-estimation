@@ -22,7 +22,7 @@ class UkfDataset(torch.utils.data.Dataset):
             if len(df_run) < seq_len:
                 continue
 
-            for t in range(seq_len - 1, len(df_run)):
+            for t in range(seq_len - 1, len(df_run)-1):
                 seq = df_run.loc[t - seq_len + 1: t, self.features].values # t- seq_len + 1 to t
                 target = df_run.loc[t+1, self.features].values  # t + 1
                 self.inputs.append(seq.astype(np.float32))
