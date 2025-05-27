@@ -2,277 +2,62 @@ import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
-
-def normalize_imu(ax,ay,r):
-    """
-    Normalize IMU signals to a range of [-1, 1]
-    """
-    a_scale = 40
-    w_scale = 6
-    ax = np.clip(ax, -a_scale, a_scale) / a_scale
-    ay = np.clip(ay, -a_scale, a_scale) / a_scale
-    r = np.clip(r, -w_scale, w_scale) / w_scale
-    return ax, ay, r
-
-def denormalize_imu(ax,ay,r):
-    """
-    Denormalize IMU signals from a range of [-1, 1]
-    """
-    a_scale = 40
-    w_scale = 6
-    ax = ax * a_scale
-    ay = ay * a_scale
-    r = r * w_scale
-    return ax, ay, r
-
-def compute_ground_truth(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    각 run_id 별로 모션 캡처 속도로부터 IMU의 실제 가속도(ax_gt, ay_gt)와 각속도(r_gt)를 계산합니다.
-    계산이 불가능한 row는 제거합니다.
-    """
-    dt = 0.01
-    result = []
-    # remove outliers (training data)
-    
-    # run_id 기준으로 그룹화
-    for run_id, group in df.groupby('run_id'):
-        group = group.sort_values(by='Unnamed: 0')  # 시간 순 정렬 (혹시 모르니 안전하게)
-        dvx = group['v_x'].diff() / dt
-        dvy = group['v_y'].diff() / dt
-        yaw = group['r']
-    
-
-        # 계산
-        ax_gt = dvx - yaw * group['v_y']
-        ay_gt = dvy + yaw * group['v_x']
-
-        group = group.copy()
-        group['ax_gt'] = ax_gt
-        group['ay_gt'] = ay_gt
-        group['r_gt'] = yaw
-
-        # NaN 제거 (주로 첫 row)
-        group = group.dropna(subset=['ax_gt', 'ay_gt'])
-
-        result.append(group)
-
-    # 전체 병합
-    return pd.concat(result, ignore_index=True)
-
-def interpolate_motion(df: pd.DataFrame, start_time: float, end_time: float) -> pd.DataFrame:
-    """
-    지정된 시간 구간(start_time ~ end_time) 동안 v_x, v_y, r 컬럼에 대해 선형 보간을 수행합니다.
-    """
-    # 보간 대상 컬럼
-    cols_to_interpolate = ['v_x', 'v_y', 'r']
-
-    # 시간 구간 필터링
-    mask = (df["Unnamed: 0"] >= start_time) & (df["Unnamed: 0"] <= end_time)
-
-    # NaN으로 마킹 (보간 처리 대상)
-    df.loc[mask, cols_to_interpolate] = None
-
-    # 선형 보간 (앞뒤 방향 모두)
-    df[cols_to_interpolate] = df[cols_to_interpolate].interpolate(method='linear', limit_direction='both')
-
-    return df
-
+import joblib 
 class IMUDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        input_seq_len: int = 3,
-        pred_seq_len: int = 1,
-        step: int = 1,
-        pad: int = 0,
-        run_ids: list = None,
-        device: torch.device = torch.device("cpu"),
-    ):
-        self.input_seq_len = input_seq_len
-        self.pred_seq_len = pred_seq_len
-        self.step = step
-        self.pad = pad
-        self.device = device
+    def __init__(self, df, seq_len=5, run_id_list=None):
+        self.seq_len = seq_len
+        self.imu_features = ['ax_imu', 'ay_imu', 'r_imu']
+        self.gt_features = ['ax_gt', 'ay_gt', 'r_gt']
 
-        # Split runs
-        self.runs = self._split_and_trim_runs(df, run_ids)
+        self.inputs = []
+        self.targets = []
 
-        # Generate samples
-        inputs, targets = self._generate_samples()
-        if len(inputs) == 0:
-            raise ValueError("No samples found. Check if your run data is long enough or preprocessing trimmed everything.")
-        
-        self.inputs = torch.tensor(np.stack(inputs), dtype=torch.float32, device=device)
-        self.targets = torch.tensor(np.stack(targets), dtype=torch.float32, device=device)
-
-    def _split_and_trim_runs(self, df: pd.DataFrame, run_ids: list = None) -> dict:
-        raw_runs = {}
-        ids = run_ids if run_ids is not None else df["run_id"].unique()
-        for rid in ids:
-            run_df = df[df["run_id"] == rid].reset_index(drop=True)
-            raw_runs[rid] = run_df
-
-        processed = {}
-        min_len = self.input_seq_len + self.pred_seq_len + 2 * self.pad
-        for rid, run_df in raw_runs.items():
-            if len(run_df) >= min_len:
-                # drop pad frames at start/end
-                processed[rid] = run_df.iloc[self.pad : -self.pad].reset_index(drop=True)
-        return processed
-
-    def _generate_samples(self) -> tuple:
-        all_inputs, all_targets = [], []
-        for run_df in self.runs.values():
-            ins, tars = self._process_single_run(run_df)
-            all_inputs.extend(ins)
-            all_targets.extend(tars)
-        return all_inputs, all_targets
-
-    def _process_single_run(self, run_df: pd.DataFrame) -> tuple:
-        inputs, targets = [], []
-        total = len(run_df)
-        for start in range(0, total - self.input_seq_len - self.pred_seq_len + 1, self.step):
-            inp = self._get_input_window(run_df, start)
-            tar = self._get_target_window(run_df, start)
-            inputs.append(inp)
-            targets.append(tar)
-        return inputs, targets
-
-    def _get_input_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        cols = ["ax_imu", "ay_imu", "r_imu"]
-        # cols = ["ax_imu_n", "ay_imu_n", "r_imu_n"]
-        data = df.loc[start : start + self.input_seq_len - 1, cols].values
-        return data.T
-        # return data
-
-    def _get_target_window(self, df: pd.DataFrame, start: int) -> np.ndarray:
-        idx = start + self.input_seq_len + self.pred_seq_len - 2
-        cols = ["ax_gt", "ay_gt", "r_gt"]
-        # cols = ["ax_gt_n", "ay_gt_n", "r_gt_n"]
-        data = df.loc[idx, cols].values
-        data = data.reshape(-1, 1)
-        return data
-
-    def __len__(self) -> int:
-        return self.inputs.size(0)
-
-    def __getitem__(self, idx: int) -> tuple:
-        return self.inputs[idx], self.targets[idx]
-
-    def plot(self, run_id: int, save_path: str = None):
-        """
-        Plot filtered error signals for a specific run.
-        If save_path is provided, saves the figure instead of showing.
-        """
-        run_df = self.runs[run_id]
-        n = len(run_df)
-        time = np.arange(n) * 0.01
-        
-        ax_imu = run_df["ax_imu"].to_numpy()
-        ay_imu = run_df["ay_imu"].to_numpy()
-        r_imu = run_df["r_imu"].to_numpy()
-        
-        ax_gt = run_df["ax_gt"].to_numpy()
-        ax_b = run_df["ax_e_b"].to_numpy()
-        ax_n = run_df["ax_n"].to_numpy()
-
-        dyn_ay = run_df["ay_gt"].to_numpy()
-        ay_b = run_df["ay_e_b"].to_numpy()
-        ay_n = run_df["ay_n"].to_numpy()
-
-        dyn_r = run_df["r_gt"].to_numpy()
-        r_b = run_df["r_e_b"].to_numpy()
-        r_n = run_df["r_n"].to_numpy()
-
-        fig, axs = plt.subplots(3, 1, sharex=True, figsize=(8, 6))
-        fig.suptitle(f"Run ID: {run_id}")
-        axs[0].plot(time, ax_n, label="noise ax")
-        axs[0].plot(time, ax_b, label="bias ax")
-
-        axs[0].set_ylabel("ax")
-        axs[1].plot(time, ay_n, label="noise ay")
-        axs[1].plot(time, ay_b, label="bias ay")
-
-        axs[1].set_ylabel("ay")
-        axs[2].plot(time, r_n, label="noise r")
-        axs[2].plot(time, r_b, label="bias r")
-
-        axs[2].set_ylabel("r")
-        axs[2].set_xlabel("Time (s)")
-        for ax in axs:
-            ax.legend()
-        plt.tight_layout()
-        
-        fig, axs = plt.subplots(3, 1, sharex=True, figsize=(8, 6))
-        fig.suptitle(f"Run ID: {run_id}")
-        axs[0].plot(time, ax_imu, label="ax imu")
-        axs[0].plot(time, ax_gt, label="gt ax")
-        axs[0].set_ylabel("ax imu")
-        axs[1].plot(time, ay_imu, label="ay imu")
-        axs[1].plot(time, dyn_ay, label="gt ay")
-        axs[1].set_ylabel("ay imu")
-        axs[2].plot(time, r_imu, label="r imu")
-        axs[2].plot(time, dyn_r, label="gt r")
-        axs[2].set_ylabel("r imu")
-        axs[2].set_xlabel("Time (s)")
-        for ax in axs:
-            ax.legend()
-        plt.tight_layout()
-
-        if save_path:
-            plt.savefig(save_path)
+        if run_id_list is None:
+            run_ids = df['run_id'].unique()
         else:
-            plt.show()
+            run_ids = run_id_list
+
+        for run_id in run_ids:
+            df_run = df[df['run_id'] == run_id].reset_index(drop=True)
+            if len(df_run) < seq_len:
+                continue
+
+            for t in range(seq_len - 1, len(df_run)):
+                seq = df_run.loc[t - seq_len + 1: t, self.imu_features].values.T  # shape: (channels, seq_len)
+                target = df_run.loc[t, self.gt_features].values  # shape: (n_targets,)
+                self.inputs.append(seq.astype(np.float32))
+                self.targets.append(target.astype(np.float32))
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, idx):
+        x = torch.tensor(self.inputs[idx])  # shape: (channels, seq_len)
+        y = torch.tensor(self.targets[idx])  # shape: (n_targets,)
+        return x, y
 
 if __name__ == "__main__":
-    # df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv")
-    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test.csv")
-    
+    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv")
+    imu_features = ['ax_imu', 'ay_imu', 'r_imu']
+    gt_features = ['ax_gt', 'ay_gt', 'r_gt']
 
-    # df= interpolate_motion(df, 518.54, 518.73)
-    # df =interpolate_motion(df, 439.35, 439.50)
-    # df = interpolate_motion(df, 15.36, 15.40)
-    # df = interpolate_motion(df, 236.29, 236.50)
-    
-    df = interpolate_motion(df, 30.71,30.82)
+    # 평균과 표준편차 계산
+    imu_mean = df[imu_features].mean()
+    imu_std = df[imu_features].std()
+    gt_mean = df[gt_features].mean()
+    gt_std = df[gt_features].std()
 
-    df = compute_ground_truth(df)
-    
-    # df.to_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv", index=False)
-    df.to_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv", index=False)
+    # 정규화 적용
+    df[imu_features] = (df[imu_features] - imu_mean) / imu_std
+    df[gt_features] = (df[gt_features] - gt_mean) / gt_std
 
-    # print(df.head())
+    # 정규화 파라미터 저장
+    norm_params = {
+        'imu_mean': imu_mean,
+        'imu_std': imu_std,
+        'gt_mean': gt_mean,
+        'gt_std': gt_std
+    }
+    joblib.dump(norm_params, 'normalization_params.pkl')
 
-    time = df["Unnamed: 0"].to_numpy()
-    ax_imu = df["ax_imu"].to_numpy()
-    ax_gt = df["ax_gt"].to_numpy()
-    ay_imu = df["ay_imu"].to_numpy()
-    ay_gt = df["ay_gt"].to_numpy()
-    r_imu = df["r_imu"].to_numpy()
-    r_gt = df["r_gt"].to_numpy()
-    
-    vx= df["v_x"].to_numpy()
-    vy = df["v_y"].to_numpy()
-
-    # 올바른 순서로 figure, axes 생성
-    fig, axs = plt.subplots(3, 1, sharex=True)
-
-
-    axs[0].plot(time, ax_gt, label="gt ax")
-    axs[0].set_ylabel("ax")
-
-
-    axs[1].plot(time, ay_gt, label="gt ay")
-
-    axs[1].set_ylabel("ay")
-
-    axs[2].plot(time, r_gt, label="gt r")
-    axs[2].set_ylabel("r")
-    axs[2].set_xlabel("Time (s)")
-
-    for ax in axs:
-        ax.legend()
-
-    plt.tight_layout()
-    plt.show()
-    
+    # dataset = IMUDataset(df, seq_len=3)

@@ -23,13 +23,11 @@ class UKF:
                 P: torch.Tensor,
                 Q: torch.Tensor,
                 state_transition_func,
-                u: torch.Tensor
                ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         X: [batch, state_dim]
         P: [batch, state_dim, state_dim]
         Q: [batch, state_dim, state_dim]
-        u: [batch, control_dim]
         """
         assert X.shape[-1] == self.state_dim
         assert P.shape[-1] == self.state_dim
@@ -48,13 +46,11 @@ class UKF:
                Z: torch.Tensor,
                R: torch.Tensor,
                measurement_func,
-               u: torch.Tensor
               ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         X_pred: [batch, state_dim]
         P_pred: [batch, state_dim, state_dim]
         Z: [batch, meas_dim]
-        u: [batch, control_dim]
         """
         assert X_pred.shape[-1] == self.state_dim
         assert P_pred.shape[-1] == self.state_dim

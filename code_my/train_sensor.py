@@ -10,30 +10,30 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # Local imports
-from sensor_models.debias_model import IMUDebiasNet
-from sensor_models.imu_model import GaussianTCN
-from sensor_models.imu_model_gru import GaussianGRU
-from sensor_models.imu_dataset import IMUDataset, preprocess_df, normalize_imu
+from sensor_models.imu_model import ImuModel
+from sensor_models.imu_dataset import IMUDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # fix seed
 torch.manual_seed(42)
 np.random.seed(42)
-torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 def get_dataloader(df):
     # Prepare train/validation datasets
-    df = preprocess_df(df)
+    # df = preprocess_df(df)
 
     train_ids, val_ids = [10, 12, 23, 27, 28, 29, 31, 32], [0, 2, 6, 7, 13, 18]
-    train_ds = IMUDataset(df, run_ids=train_ids, device=device)
-    val_ds   = IMUDataset(df, run_ids=val_ids,   device=device)
+    train_ds = IMUDataset(df, run_id_list=train_ids)
+    val_ds   = IMUDataset(df, run_id_list=val_ids)
 
     # Build DataLoaders
-    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
-    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=64, shuffle=False)
+    val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+    
 
     return train_loader, val_loader
 
@@ -41,9 +41,11 @@ def train_one_epoch(model, dataloader, optimizer, scheduler):
     model.train()
     losses = []
     for inputs,targets in dataloader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
         optimizer.zero_grad()
-        mu, var = model(inputs)
-        loss = model.loss_function(mu, var, targets)
+        x = model(inputs)
+        loss = model.loss_function(x, targets)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -57,8 +59,10 @@ def validate(model, dataloader):
     losses = []
     with torch.no_grad():
         for inputs, targets in dataloader:
-            mu, var = model(inputs)
-            loss = model.loss_function(mu, var, targets)
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+            x = model(inputs)
+            loss = model.loss_function(x, targets)
             losses.append(loss.item())
             
     return np.mean(losses)
@@ -66,16 +70,13 @@ def validate(model, dataloader):
 
 def main():
     # Paths and logging setup
-    df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv', index_col=0)
+    df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv', index_col=0)
     timestamp = time.strftime('%m-%d_%H-%M')
     save_dir = os.path.join('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/', timestamp)
     os.makedirs(save_dir, exist_ok=True)
 
     total_epochs = 200
-    # Build model, dataloaders, optimizer
-    # model= GaussianTCN()
-    # model = IMUDebiasNet()
-    model = GaussianGRU()
+    model= ImuModel()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
     

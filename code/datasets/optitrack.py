@@ -18,19 +18,19 @@ class OptitrackDataset(torch.utils.data.Dataset):
     ):
         self.Ts_multiplier = Ts_multiplier
         self.check_new_run = check_new_run
-        self.all_data = pd.read_csv(csv_file, index_col=0)
+        self.df = pd.read_csv(csv_file, index_col=0)
 
-        self.all_data = self.all_data.iloc[::subsample_all, :]
+        self.df = self.df.iloc[::subsample_all, :]
 
-        test_index = self.all_data["run_id"].isin(test_run_id)
+        test_index = self.df["run_id"].isin(test_run_id)
         train_index = ~test_index
-        self.all_data = self.all_data[test_index if test else train_index]
+        self.df = self.df[test_index if test else train_index]
 
-        self.data = self.all_data[self.state_def()]
+        self.data = self.df[self.state_def()]
 
-        self.run_id = self.all_data["run_id"].values
+        self.run_id = self.df["run_id"].values
 
-        self.t = self.all_data.index.values
+        self.t = self.df.index.values
 
         self.data_torch = torch.tensor(
             self.data.values, dtype=dtype, device=device)

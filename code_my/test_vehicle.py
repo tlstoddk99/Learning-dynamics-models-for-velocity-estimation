@@ -3,142 +3,132 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import time
 import torch
-
-from robot_models.single_track_pacejka import SingleTrackPacejkaModel
-from robot_models.single_track_parameters import SingleTrackParameters
-from tire_models.pacejka import PacejkaTireModel
-
-
+import pickle
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
-# from torch.nn.utils import remove_weight_norm
+import torchdiffeq as ode
+
+# Local imports
+from robot_models.vehicle_dataset import VehicleDataset
+from robot_models.single_track_pacejka import SingleTrackPacejkaModel
+from robot_models.pacejka import PacejkaTireModel
+from robot_models.single_track_parameters import SingleTrackParameters
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths and logging setup
-df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_test.csv', index_col=0)
-# df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/opti_test/hoons_all_train_and_val.csv', index_col=0)
+df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
+# df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val.csv', index_col=0)
+
+# Load the model state dict
+model_state_dict = torch.load(
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/vehicle/05-27_01-26/best_epoch_184_loss_2.2829.pt',
+                              )
 timestamp = time.strftime('%m-%d_%H-%M')
+
+
 
 # fix seed
 torch.manual_seed(42)
 np.random.seed(42)
-torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
-vehicle_parameters = SingleTrackParameters()
-tire_model = PacejkaTireModel(vehicle_parameters)
-model = SingleTrackPacejkaModel(vehicle_parameters, tire_model)
-model.to(device)
-model = torch.jit.script(model)
+test_dataset = VehicleDataset(df)
+test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+vehicle_params = SingleTrackParameters()
+tire_model = PacejkaTireModel(vehicle_parameters=vehicle_params)
+
+model= SingleTrackPacejkaModel(
+    vehicle_parameters=vehicle_params,
+    tire_model=tire_model
+)
+
+
+# Load the model state dict
 # model.load_state_dict(model_state_dict)
-model = model.to(device)
-model.eval()
 
-#make dataloader
+model = torch.jit.script(model)
+state_weights = torch.tensor([0.2225, 0.5064, 0.1566, 0.1145, 0.0, 0.0, 0.0], device=device)
+model.to(device)
 
-count = 0
 results = []
 infer_times = []
-
+count = 0
 model.eval()
-# with torch.no_grad():
-#     for inputs,targets in test_dataloader:
-#         # inputs=inputs.flatten(start_dim=1)
-#         time0 =time.time()
-#         mu, var = model(inputs)
-#         time1 = time.time()
+with torch.no_grad():
+    for x, x_next in test_dataloader:
+        rmses= []
         
-#         mu = mu.cpu().numpy().flatten()
-#         var = var.cpu().numpy().flatten()
-#         targets = targets.cpu().numpy().flatten()
+        x = x.to(device)  # (B,7)
+        x_next = x_next.to(device)  # (B,7)
         
-#         std= np.sqrt(var)
-
-#         # 3 sigma rule: 99.73% of the data
-#         # 2 sigma rule: 95.45% of the data
-#         # 1 sigma rule: 68.27% of the data
-#         uncertainty = 2*std
-
-#         results.append({
-#             'prediction': mu,
-#             'target': targets,
-#             'error': (mu - targets),
-#             'uncertainty': uncertainty,
-#         })
+        time2 = time.time()
+        pred_x = ode.odeint(
+            model,
+            x,
+            torch.tensor([0, 0.01], device=x.device),
+            method="rk4",
+            rtol=1e-5,
+            atol=1e-6
+        )[-1]
+        time3 = time.time()
         
-#         if count >2:
-#             infer_times.append(time1 - time0)
-#         count += 1
+        # pred_x = pred_x* state_weights  # Apply state weights
 
-# #plot the results
-# #[ax,ay,r,wheel_speed]
+        x_np = x.cpu().numpy().squeeze()
+        pred_x_np = pred_x.cpu().numpy().squeeze()
+        target_np = x_next.cpu().numpy().squeeze()
+        # Calculate RMSE for each state variable
+        rmse = np.sqrt(np.mean((pred_x_np - target_np) ** 2, axis=0))
+            
+        
+        
+        results.append({
+            'input': x_np,
+            'prediction': pred_x_np,
+            'target': target_np,
+            'rmse': rmse,
+        })
 
-# # Define your metrics in order
-# # metrics = ['ax', 'ay', 'r', 'wheel_speed']
-# metrics = ['ax', 'ay', 'r']
 
-# # Create a 2×2 grid of subplots
-# fig, axs = plt.subplots(3, 1)
-# axs = axs.flat  # flatten to a 1D iterator
+        infer_time = np.clip(time3 - time2, 0, 0.01)
+        infer_times.append(infer_time)
 
-# times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
 
-# # Loop over each metric/index
-# for idx, (ax, metric) in enumerate(zip(axs, metrics)):
-#     preds = [res['prediction'][idx] for res in results]
-#     targs = [res['target'][idx]     for res in results]
-#     uncs  = [res['uncertainty'][idx] for res in results]
+metrics = ['v_x', 'v_y', 'r', 'omega_wheels', 'friction']
 
-#     ax.set_title(metric)
-#     ax.set_xlabel('time')
-#     ax.set_ylabel(metric)
+# Create a 5×1 grid of subplots
+fig, axs = plt.subplots(5, 1, sharex=True)
+axs = axs.flat  # flatten to a 1D iterator
 
-#     ax.plot(times, preds, label='prediction')
-#     ax.plot(times, targs, alpha=0.8 ,label='target')
-#     ax.fill_between(
-#         times,
-#         [p - u for p, u in zip(preds, uncs)],
-#         [p + u for p, u in zip(preds, uncs)],
-#         alpha=0.2,
-#         label='uncertainty'
-#     )
-#     ax.legend()
-#     ax.grid()
+times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
+
+# Loop over each metric/index
+for idx, (ax, metric) in enumerate(zip(axs, metrics)):
+
+    ax.plot(times, [res['rmse'] for res in results], label='RMSE')
+    ax.set_ylabel(f'{metric}')
+    ax.set_xlabel('time')
+    ax.legend()
+    ax.grid()
     
-# fig, axs_2 =  plt.subplots(3, 1)
-# axs_2 = axs_2.flat  # flatten to a 1D iterator
 
-# for idx, (ax_2, metric) in enumerate(zip(axs_2, metrics)):
-#     errs = [res['error'][idx] for res in results]
-#     uncs = [res['uncertainty'][idx] for res in results]
-    
-#     ax_2.set_title(f'{metric} error')
-#     ax_2.set_xlabel('time')
-#     ax_2.set_ylabel('error')
-#     ax_2.plot(times, errs, label='error')
-#     # ax_2.plot(times, uncs, label='uncertainty')
-#     ax_2.fill_between(
-#         times,
-#         [u for u in uncs],
-#         [-u for u in uncs],
-#         alpha=0.2,
-#         label='uncertainty',
-#         color='C1'
-#     )
-#     ax_2.legend()
-#     ax_2.grid()
+times = np.arange(0, len(infer_times) * 0.01, 0.01).tolist()
 
-# times = np.arange(0, len(infer_times) * 0.01, 0.01).tolist()
-
-# plt.figure()
-# plt.plot(times, infer_times)
-# plt.title(f'mean inference time: {np.mean(infer_times):.4f} s')
-# plt.xlabel('Batch index')
-# plt.ylabel('Time (s)')
+plt.figure()
+plt.plot(times, infer_times, label='Neural Pacejka')
+plt.title(f'infer.mean: {np.median(infer_times):.4f} s')
+plt.legend()
+plt.xlabel('Batch index')
+plt.ylabel('Time (s)')
 
 
-# plt.tight_layout()
-# plt.show()
+plt.tight_layout()
+plt.show()
     
     
     

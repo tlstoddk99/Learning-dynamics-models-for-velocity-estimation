@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor
 from torch.nn import Module
-
+import torch.nn.functional as F
 
 class SingleTrackPacejkaModel(Module):
     """
@@ -13,7 +13,7 @@ class SingleTrackPacejkaModel(Module):
         self.p = vehicle_parameters  # type: ignore[attr-defined]
         self.tire_model = tire_model
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, t, x: Tensor) -> Tensor:
         # x: [..., 7] = [v_x, v_y, r, omega_wheels, friction, delta, Iq]
         v_x, v_y, r, omega_wheels, friction, delta, Iq = torch.unbind(x, dim=-1)
 
@@ -79,9 +79,11 @@ class SingleTrackPacejkaModel(Module):
             zeros,
             zeros,
         ], dim=-1)
+        
+    def loss_function(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return F.mse_loss(x, y)
 
 
-@torch.jit.script
 def observation(model: Module, xu: Tensor) -> Tensor:
     """
     Compute observation from full state.
