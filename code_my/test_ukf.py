@@ -20,13 +20,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Paths and logging setup
 df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
 
-start_idx = 3500
+start_idx = 1000
 # Load the model state dict
 sensor_model_path = torch.load(
     '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-26_22-48/best_epoch_199_loss_1.5399.pt',
                               )
 dataset= UkfDataset(df,run_id_list=[4])
-dataset = Subset(dataset, np.arange(start_idx, start_idx+1000, 1))  
+dataset = Subset(dataset, np.arange(start_idx, start_idx+2000, 1))  
 test_dataloader= DataLoader(dataset, batch_size=1, shuffle=False)
 #  ['v_x', 'v_y', 'r', 'omega_wheels', 'friction', 'delta', 'Iq', 'ax_imu', 'ay_imu', 'r_imu']
 timestamp = time.strftime('%m-%d_%H-%M')
@@ -145,13 +145,13 @@ with torch.no_grad():
         if count == 0:
             x_hat = x[:,-1,:5] # (B, 5)
             x_hat_raw = x[:,-1,:5] # (B, 5)
-            P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3],device=device)).unsqueeze(0)
+            P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
             P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
-            Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
-            R=torch.diag(torch.tensor([5e-1, 50e-1, 1e-1, 1e-3], device=device)).unsqueeze(0)
-            R_raw=torch.diag(torch.tensor([1000e-1, 1000e-1, 500e-1, 1e-3], device=device)).unsqueeze(0)
-        
-        
+            Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
+            R=torch.diag(torch.tensor([50e-1, 10e-1, 10e-1, 1e-1], device=device)).unsqueeze(0)
+            R_raw=torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
+
+
         wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
         u= x[:, -1, 5:7] # (B, 2) 
         
@@ -226,7 +226,7 @@ with torch.no_grad():
 # positions_gt, yaws_gt = compute_trajectory(results, 'GT')
 
 # # 궤적 플로팅
-# fig, ax = plt.subplots(figsize=(10, 10))
+# fig, ax = plt.subplots()
 # ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
 # ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
 # ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
@@ -250,10 +250,11 @@ with torch.no_grad():
 # # 그래프 꾸미기
 # ax.set_xlabel('X position [m]')
 # ax.set_ylabel('Y position [m]')
-# ax.grid()
+# ax.grid(alpha=0.7)
+# ax.set_aspect('equal', adjustable='box')
 # ax.axis('equal')
 # ax.legend()
-# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx},{end_idx}.png'
+# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
 # plt.savefig(save_path, dpi=300, bbox_inches='tight')
 # plt.show()
 
@@ -264,7 +265,7 @@ R_n = R.cpu().numpy().squeeze()
 R_raw_n = R_raw.cpu().numpy().squeeze()
 
 metrics = ['v_x', 'v_y', 'r']
-
+errors=[]
 # Create a 3×1 grid of subplots
 fig, axs = plt.subplots(3, 1, sharex=True)
 axs = axs.flat  # flatten to a 1D iterator
@@ -279,7 +280,8 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
     error_raw_sensor = [res['Error Raw Sensor'][idx] for res in results]
     error_proposed = [res['Error Proposed'][idx] for res in results]
     
-    
+    rmse= np.sqrt(np.mean(np.square(np.array(gt) - np.array(proposed))))
+    errors.append(rmse)
     ax.plot(times, gt, label='GT', linewidth=2, alpha=0.7, color='black')
     ax.plot(times, raw_sensor, label='Raw Sensor', linewidth=2, alpha=0.7, color='C0')
     ax.plot(times, proposed, label='Proposed', linewidth=2, alpha=0.7, color='red')
@@ -287,21 +289,23 @@ for idx, (ax, metric) in enumerate(zip(axs, metrics)):
     # ax.plot(times, error_proposed, label='Error Proposed', linewidth=2, alpha=0.7, color='red')
     ax.set_ylabel(f'{metric}')
     ax.set_xlabel('time')
-    ax.set_title(f'{metric} - Q: {Q_n[idx, idx]:.1e}, R: {R_n[idx, idx]:.1e}, R_raw: {R_raw_n[idx, idx]:.1e}')
+    # ax.set_title(f'{metric} - Q: {Q_n[idx, idx]:.1e}, R: {R_n[idx, idx]:.1e}, R_raw: {R_raw_n[idx, idx]:.1e}')
+    ax.set_title(f'{metric} - R: {R_n[idx, idx]:.3f}, E: {rmse:.3f}')
     ax.legend()
     ax.grid()
     
 plt.tight_layout()
+plt.savefig(f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_vel/{np.mean(errors):.3f}.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 
-plt.figure()
-plt.plot(times, infer_times, label='Proposed Inference Time', color='red', linewidth=2)
-plt.plot(times, raw_infer_times, label='Raw Sensor Inference Time', color='C0', linewidth=2)
-plt.xlabel('Batch Index')
-plt.ylabel('Inference Time (s)')
-plt.title(f'Mean Inference Time: {np.mean(infer_times):.4f} s (Proposed), {np.mean(raw_infer_times):.4f} s (Raw Sensor)')
-plt.legend()
-plt.grid()
-plt.tight_layout()
-plt.show()
+# plt.figure()
+# plt.plot(times, infer_times, label='Proposed Inference Time', color='red', linewidth=2)
+# plt.plot(times, raw_infer_times, label='Raw Sensor Inference Time', color='C0', linewidth=2)
+# plt.xlabel('Batch Index')
+# plt.ylabel('Inference Time (s)')
+# plt.title(f'Mean Inference Time: {np.mean(infer_times):.4f} s (Proposed), {np.mean(raw_infer_times):.4f} s (Raw Sensor)')
+# plt.legend()
+# plt.grid()
+# plt.tight_layout()
+# plt.show()
