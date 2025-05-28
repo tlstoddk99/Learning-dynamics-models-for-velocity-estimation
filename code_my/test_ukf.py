@@ -148,8 +148,8 @@ with torch.no_grad():
             P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3],device=device)).unsqueeze(0)
             P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
             Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
-            R=torch.diag(torch.tensor([10e-1, 100e-1, 1e-2, 1e-3], device=device)).unsqueeze(0)
-            R_raw=torch.diag(torch.tensor([5000e-1, 5000e-1, 10e-1, 1e-3], device=device)).unsqueeze(0)
+            R=torch.diag(torch.tensor([5e-1, 50e-1, 1e-1, 1e-3], device=device)).unsqueeze(0)
+            R_raw=torch.diag(torch.tensor([1000e-1, 1000e-1, 500e-1, 1e-3], device=device)).unsqueeze(0)
         
         
         wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
@@ -178,12 +178,14 @@ with torch.no_grad():
         results.append({
             'Raw Sensor': x_hat_raw_np,
             'Proposed': x_hat_np,
+            'Error Raw Sensor': x_hat_raw_np - target_np[:5],
+            'Error Proposed': x_hat_np - target_np[:5],
             'GT': target_np,
         })
 
 
         raw_infer_time = np.clip(time1 - time0, 0, 0.02)
-        infer_time = np.clip(time2 - time3, 0, 0.02)  
+        infer_time = np.clip(time3 - time2, 0, 0.02)  
         raw_infer_times.append(raw_infer_time)
         infer_times.append(infer_time)
         count += 1
@@ -271,9 +273,18 @@ times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
 
 # Loop over each metric/index
 for idx, (ax, metric) in enumerate(zip(axs, metrics)):
-    ax.plot(times, [res['GT'][idx] for res in results], label='GT', linewidth=2, alpha=0.7, color='black')
-    ax.plot(times, [res['Raw Sensor'][idx] for res in results], label='Raw Sensor', linewidth=2, alpha=0.7, color='C0')
-    ax.plot(times, [res['Proposed'][idx] for res in results], label='Proposed', linewidth=2, alpha=0.7, color='red')
+    gt= [res['GT'][idx] for res in results]
+    raw_sensor= [res['Raw Sensor'][idx] for res in results]
+    proposed= [res['Proposed'][idx] for res in results]
+    error_raw_sensor = [res['Error Raw Sensor'][idx] for res in results]
+    error_proposed = [res['Error Proposed'][idx] for res in results]
+    
+    
+    ax.plot(times, gt, label='GT', linewidth=2, alpha=0.7, color='black')
+    ax.plot(times, raw_sensor, label='Raw Sensor', linewidth=2, alpha=0.7, color='C0')
+    ax.plot(times, proposed, label='Proposed', linewidth=2, alpha=0.7, color='red')
+    # ax.plot(times, error_raw_sensor, label='Error Raw Sensor', linewidth=2, alpha=0.7, color='C0')
+    # ax.plot(times, error_proposed, label='Error Proposed', linewidth=2, alpha=0.7, color='red')
     ax.set_ylabel(f'{metric}')
     ax.set_xlabel('time')
     ax.set_title(f'{metric} - Q: {Q_n[idx, idx]:.1e}, R: {R_n[idx, idx]:.1e}, R_raw: {R_raw_n[idx, idx]:.1e}')
