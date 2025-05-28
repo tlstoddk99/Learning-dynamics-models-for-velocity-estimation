@@ -20,13 +20,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Paths and logging setup
 df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
 
-start_idx = 1600
+start_idx = 0
 # Load the model state dict
 sensor_model_path = torch.load(
     '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-26_22-48/best_epoch_199_loss_1.5399.pt',
                               )
 dataset= UkfDataset(df,run_id_list=[4])
-dataset = Subset(dataset, np.arange(start_idx, start_idx+200, 1))  
+# dataset = Subset(dataset, np.arange(start_idx, start_idx+100, 1))  
 test_dataloader= DataLoader(dataset, batch_size=1, shuffle=False)
 #  ['v_x', 'v_y', 'r', 'omega_wheels', 'friction', 'delta', 'Iq', 'ax_imu', 'ay_imu', 'r_imu']
 timestamp = time.strftime('%m-%d_%H-%M')
@@ -146,10 +146,15 @@ with torch.no_grad():
             x_hat = x[:,-1,:5] # (B, 5)
             x_hat_raw = x[:,-1,:5] # (B, 5)
             P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
-            P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
+            P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
             Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
             R_raw=torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
             R=torch.diag(torch.tensor([1e1, 2e1, 5e-1, 1e-1], device=device)).unsqueeze(0)
+        # elif count% 100 == 0:
+        #     x_hat = x[:,-1,:5]
+        #     x_hat_raw = x[:,-1,:5] 
+        #     P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
+        #     P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
 
 
         wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
@@ -191,6 +196,19 @@ with torch.no_grad():
         count += 1
 
 
+def compute_ATE(positions_est, positions_gt):
+    errors = np.linalg.norm(positions_est - positions_gt, axis=1)
+    ate_rmse = np.sqrt(np.mean(errors**2))
+    return ate_rmse
+
+def compute_ARE(yaws_est, yaws_gt):
+    yaw_errors = np.array(yaws_est) - np.array(yaws_gt)
+    # yaw_errors = np.arctan2(np.sin(yaw_errors), np.cos(yaw_errors))  # [-π, π] 정규화
+    are_rmse = np.sqrt(np.mean(yaw_errors**2))
+    return are_rmse
+
+
+
 # 초기값
 x_init, y_init, yaw_init = 0.0, 0.0, 1.5
 dt = 0.01
@@ -225,38 +243,50 @@ positions_proposed, yaws_proposed = compute_trajectory(results, 'Proposed')
 positions_raw, yaws_raw = compute_trajectory(results, 'Raw Sensor')
 positions_gt, yaws_gt = compute_trajectory(results, 'GT')
 
-# 궤적 플로팅
-fig, ax = plt.subplots()
-ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
-ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
-ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
+# ATE 및 ARE 계산
+ate_proposed = compute_ATE(positions_proposed, positions_gt)
+are_proposed = compute_ARE(yaws_proposed, yaws_gt)
+ate_raw = compute_ATE(positions_raw, positions_gt)
+are_raw = compute_ARE(yaws_raw, yaws_gt)
+print(f'ATE Proposed: {ate_proposed:.3f} m, ARE Proposed: {np.degrees(are_proposed):.3f} deg')
+print(f'ATE Raw: {ate_raw:.3f} m, ARE Raw: {np.degrees(are_raw):.3f} deg')
+print(f'ATE Improvement: {100 * (ate_raw - ate_proposed) / ate_raw:.2f}%, ARE Improvement: {100 * (are_raw - are_proposed) / are_raw:.2f}%')
+print(f'Inference Time - Proposed: {np.mean(infer_times):.4f} s, Raw Sensor: {np.mean(raw_infer_times):.4f} s')
+print(f'Length of dataset: {len(results)}')
 
-arrow_interval = int(0.2 / dt)
 
-# 화살표 그리는 함수
-def draw_arrows(ax, positions, yaws, color):
-    for i in range(0, len(positions), arrow_interval):
-        px, py = positions[i]
-        yaw_i = yaws[i]
-        arrow_dx = np.cos(yaw_i) * 0.1
-        arrow_dy = np.sin(yaw_i) * 0.1
-        ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+# # 궤적 플로팅
+# fig, ax = plt.subplots()
+# ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
+# ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
+# ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
 
-# 각 궤적에 화살표 추가
-draw_arrows(ax, positions_gt, yaws_gt, 'black')
-draw_arrows(ax, positions_raw, yaws_raw, 'C0')
-draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
+# arrow_interval = int(0.2 / dt)
 
-# 그래프 꾸미기
-ax.set_xlabel('X position [m]')
-ax.set_ylabel('Y position [m]')
-ax.grid(alpha=0.7)
-ax.set_aspect('equal', adjustable='box')
-ax.axis('equal')
-ax.legend()
-save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
-plt.savefig(save_path, dpi=300, bbox_inches='tight')
-plt.show()
+# # 화살표 그리는 함수
+# def draw_arrows(ax, positions, yaws, color):
+#     for i in range(0, len(positions), arrow_interval):
+#         px, py = positions[i]
+#         yaw_i = yaws[i]
+#         arrow_dx = np.cos(yaw_i) * 0.1
+#         arrow_dy = np.sin(yaw_i) * 0.1
+#         ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+
+# # 각 궤적에 화살표 추가
+# draw_arrows(ax, positions_gt, yaws_gt, 'black')
+# draw_arrows(ax, positions_raw, yaws_raw, 'C0')
+# draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
+
+# # 그래프 꾸미기
+# ax.set_xlabel('X position [m]')
+# ax.set_ylabel('Y position [m]')
+# ax.grid(alpha=0.7)
+# ax.set_aspect('equal', adjustable='box')
+# ax.axis('equal')
+# ax.legend()
+# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
+# plt.savefig(save_path, dpi=300, bbox_inches='tight')
+# plt.show()
 
 
 
