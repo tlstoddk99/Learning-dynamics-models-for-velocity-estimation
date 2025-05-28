@@ -20,13 +20,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Paths and logging setup
 df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
 
-start_idx = 1000
+start_idx = 1600
 # Load the model state dict
 sensor_model_path = torch.load(
     '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-26_22-48/best_epoch_199_loss_1.5399.pt',
                               )
 dataset= UkfDataset(df,run_id_list=[4])
-dataset = Subset(dataset, np.arange(start_idx, start_idx+2000, 1))  
+dataset = Subset(dataset, np.arange(start_idx, start_idx+200, 1))  
 test_dataloader= DataLoader(dataset, batch_size=1, shuffle=False)
 #  ['v_x', 'v_y', 'r', 'omega_wheels', 'friction', 'delta', 'Iq', 'ax_imu', 'ay_imu', 'r_imu']
 timestamp = time.strftime('%m-%d_%H-%M')
@@ -148,8 +148,8 @@ with torch.no_grad():
             P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
             P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-3], device=device)).unsqueeze(0)
             Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
-            R=torch.diag(torch.tensor([50e-1, 10e-1, 10e-1, 1e-1], device=device)).unsqueeze(0)
             R_raw=torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
+            R=torch.diag(torch.tensor([1e1, 2e1, 5e-1, 1e-1], device=device)).unsqueeze(0)
 
 
         wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
@@ -191,112 +191,112 @@ with torch.no_grad():
         count += 1
 
 
-# # 초기값
-# x_init, y_init, yaw_init = 0.0, 0.0, 1.5
-# dt = 0.01
+# 초기값
+x_init, y_init, yaw_init = 0.0, 0.0, 1.5
+dt = 0.01
 
-# # 시간 생성
-# times = np.arange(0, len(results) * dt, dt).tolist()
+# 시간 생성
+times = np.arange(0, len(results) * dt, dt).tolist()
 
-# def compute_trajectory(results, key):
-#     x, y, yaw = x_init, y_init, yaw_init
-#     positions = [(x, y)]
-#     yaws = [yaw]
+def compute_trajectory(results, key):
+    x, y, yaw = x_init, y_init, yaw_init
+    positions = [(x, y)]
+    yaws = [yaw]
 
-#     for res in results:
-#         v_x = res[key][0]  # 차량 기준 전방 속도
-#         v_y = res[key][1]  # 차량 기준 측면 속도
-#         r = res[key][2]    # 요각 속도 (rad/s)
+    for res in results:
+        v_x = res[key][0]  # 차량 기준 전방 속도
+        v_y = res[key][1]  # 차량 기준 측면 속도
+        r = res[key][2]    # 요각 속도 (rad/s)
 
-#         dx = v_x * np.cos(yaw) - v_y * np.sin(yaw)
-#         dy = v_x * np.sin(yaw) + v_y * np.cos(yaw)
+        dx = v_x * np.cos(yaw) - v_y * np.sin(yaw)
+        dy = v_x * np.sin(yaw) + v_y * np.cos(yaw)
 
-#         x += dx * dt
-#         y += dy * dt
-#         yaw += r * dt
+        x += dx * dt
+        y += dy * dt
+        yaw += r * dt
 
-#         positions.append((x, y))
-#         yaws.append(yaw)
+        positions.append((x, y))
+        yaws.append(yaw)
 
-#     return np.array(positions), yaws
+    return np.array(positions), yaws
 
-# # 세 궤적 계산
-# positions_proposed, yaws_proposed = compute_trajectory(results, 'Proposed')
-# positions_raw, yaws_raw = compute_trajectory(results, 'Raw Sensor')
-# positions_gt, yaws_gt = compute_trajectory(results, 'GT')
+# 세 궤적 계산
+positions_proposed, yaws_proposed = compute_trajectory(results, 'Proposed')
+positions_raw, yaws_raw = compute_trajectory(results, 'Raw Sensor')
+positions_gt, yaws_gt = compute_trajectory(results, 'GT')
 
-# # 궤적 플로팅
-# fig, ax = plt.subplots()
-# ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
-# ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
-# ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
+# 궤적 플로팅
+fig, ax = plt.subplots()
+ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
+ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
+ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
 
-# arrow_interval = int(0.2 / dt)
+arrow_interval = int(0.2 / dt)
 
-# # 화살표 그리는 함수
-# def draw_arrows(ax, positions, yaws, color):
-#     for i in range(0, len(positions), arrow_interval):
-#         px, py = positions[i]
-#         yaw_i = yaws[i]
-#         arrow_dx = np.cos(yaw_i) * 0.1
-#         arrow_dy = np.sin(yaw_i) * 0.1
-#         ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+# 화살표 그리는 함수
+def draw_arrows(ax, positions, yaws, color):
+    for i in range(0, len(positions), arrow_interval):
+        px, py = positions[i]
+        yaw_i = yaws[i]
+        arrow_dx = np.cos(yaw_i) * 0.1
+        arrow_dy = np.sin(yaw_i) * 0.1
+        ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
 
-# # 각 궤적에 화살표 추가
-# draw_arrows(ax, positions_gt, yaws_gt, 'black')
-# draw_arrows(ax, positions_raw, yaws_raw, 'C0')
-# draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
+# 각 궤적에 화살표 추가
+draw_arrows(ax, positions_gt, yaws_gt, 'black')
+draw_arrows(ax, positions_raw, yaws_raw, 'C0')
+draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
 
-# # 그래프 꾸미기
-# ax.set_xlabel('X position [m]')
-# ax.set_ylabel('Y position [m]')
-# ax.grid(alpha=0.7)
-# ax.set_aspect('equal', adjustable='box')
-# ax.axis('equal')
-# ax.legend()
-# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
-# plt.savefig(save_path, dpi=300, bbox_inches='tight')
-# plt.show()
-
-
-
-Q_n = Q.cpu().numpy().squeeze()
-R_n = R.cpu().numpy().squeeze()
-R_raw_n = R_raw.cpu().numpy().squeeze()
-
-metrics = ['v_x', 'v_y', 'r']
-errors=[]
-# Create a 3×1 grid of subplots
-fig, axs = plt.subplots(3, 1, sharex=True)
-axs = axs.flat  # flatten to a 1D iterator
-
-times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
-
-# Loop over each metric/index
-for idx, (ax, metric) in enumerate(zip(axs, metrics)):
-    gt= [res['GT'][idx] for res in results]
-    raw_sensor= [res['Raw Sensor'][idx] for res in results]
-    proposed= [res['Proposed'][idx] for res in results]
-    error_raw_sensor = [res['Error Raw Sensor'][idx] for res in results]
-    error_proposed = [res['Error Proposed'][idx] for res in results]
-    
-    rmse= np.sqrt(np.mean(np.square(np.array(gt) - np.array(proposed))))
-    errors.append(rmse)
-    ax.plot(times, gt, label='GT', linewidth=2, alpha=0.7, color='black')
-    ax.plot(times, raw_sensor, label='Raw Sensor', linewidth=2, alpha=0.7, color='C0')
-    ax.plot(times, proposed, label='Proposed', linewidth=2, alpha=0.7, color='red')
-    # ax.plot(times, error_raw_sensor, label='Error Raw Sensor', linewidth=2, alpha=0.7, color='C0')
-    # ax.plot(times, error_proposed, label='Error Proposed', linewidth=2, alpha=0.7, color='red')
-    ax.set_ylabel(f'{metric}')
-    ax.set_xlabel('time')
-    # ax.set_title(f'{metric} - Q: {Q_n[idx, idx]:.1e}, R: {R_n[idx, idx]:.1e}, R_raw: {R_raw_n[idx, idx]:.1e}')
-    ax.set_title(f'{metric} - R: {R_n[idx, idx]:.3f}, E: {rmse:.3f}')
-    ax.legend()
-    ax.grid()
-    
-plt.tight_layout()
-plt.savefig(f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_vel/{np.mean(errors):.3f}.png', dpi=300, bbox_inches='tight')
+# 그래프 꾸미기
+ax.set_xlabel('X position [m]')
+ax.set_ylabel('Y position [m]')
+ax.grid(alpha=0.7)
+ax.set_aspect('equal', adjustable='box')
+ax.axis('equal')
+ax.legend()
+save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
+plt.savefig(save_path, dpi=300, bbox_inches='tight')
 plt.show()
+
+
+
+# Q_n = Q.cpu().numpy().squeeze()
+# R_n = R.cpu().numpy().squeeze()
+# R_raw_n = R_raw.cpu().numpy().squeeze()
+
+# metrics = ['v_x', 'v_y', 'r']
+# errors=[]
+# # Create a 3×1 grid of subplots
+# fig, axs = plt.subplots(3, 1, sharex=True)
+# axs = axs.flat  # flatten to a 1D iterator
+
+# times = np.arange(0, (len(results)) * 0.01, 0.01).tolist()
+
+# # Loop over each metric/index
+# for idx, (ax, metric) in enumerate(zip(axs, metrics)):
+#     gt= [res['GT'][idx] for res in results]
+#     raw_sensor= [res['Raw Sensor'][idx] for res in results]
+#     proposed= [res['Proposed'][idx] for res in results]
+#     error_raw_sensor = [res['Error Raw Sensor'][idx] for res in results]
+#     error_proposed = [res['Error Proposed'][idx] for res in results]
+    
+#     rmse= np.sqrt(np.mean(np.square(np.array(gt) - np.array(proposed))))
+#     errors.append(rmse)
+#     ax.plot(times, gt, label='GT', linewidth=2, alpha=0.7, color='black')
+#     ax.plot(times, raw_sensor, label='Raw Sensor', linewidth=2, alpha=0.7, color='C0')
+#     ax.plot(times, proposed, label='Proposed', linewidth=2, alpha=0.7, color='red')
+#     # ax.plot(times, error_raw_sensor, label='Error Raw Sensor', linewidth=2, alpha=0.7, color='C0')
+#     # ax.plot(times, error_proposed, label='Error Proposed', linewidth=2, alpha=0.7, color='red')
+#     ax.set_ylabel(f'{metric}')
+#     ax.set_xlabel('time')
+#     # ax.set_title(f'{metric} - Q: {Q_n[idx, idx]:.1e}, R: {R_n[idx, idx]:.1e}, R_raw: {R_raw_n[idx, idx]:.1e}')
+#     ax.set_title(f'{metric} - R: {R_n[idx, idx]:.3f}, E: {rmse:.3f}')
+#     ax.legend()
+#     ax.grid()
+    
+# plt.tight_layout()
+# plt.savefig(f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_vel/{np.mean(errors):.3f}.png', dpi=300, bbox_inches='tight')
+# plt.show()
 
 
 # plt.figure()
