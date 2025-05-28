@@ -9,11 +9,11 @@ class ImuModel(nn.Module):
         channels = 16
         self.temporal_conv = nn.Sequential(
             nn.Conv1d(input_channels, channels, kernel_size=3, padding=1),
-            nn.ReLU()
+            nn.SiLU()
         )
         self.channel_conv = nn.Sequential(
             nn.Conv1d(input_channels, channels, kernel_size=1),
-            nn.ReLU()
+            nn.SiLU()
         )
         self.gate_layer = nn.Sequential(
             nn.Conv1d(channels * 2, channels, kernel_size=1),
@@ -23,7 +23,7 @@ class ImuModel(nn.Module):
 
         self.mlp = nn.Sequential(
             nn.Linear(channels, 32),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(32, output_dim)
         )
 

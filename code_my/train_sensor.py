@@ -31,8 +31,8 @@ def get_dataloader(df):
     val_ds   = IMUDataset(df, run_id_list=val_ids)
 
     # Build DataLoaders
-    train_loader = DataLoader(train_ds, batch_size=1, shuffle=False)
-    val_loader   = DataLoader(val_ds,   batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=1024, shuffle=False)
+    val_loader   = DataLoader(val_ds,   batch_size=1024, shuffle=False)
     
 
     return train_loader, val_loader
@@ -75,7 +75,7 @@ def main():
     save_dir = os.path.join('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/', timestamp)
     os.makedirs(save_dir, exist_ok=True)
 
-    total_epochs = 200
+    total_epochs = 5000
     model= ImuModel()
     model.to(device)
     train_loader, val_loader = get_dataloader(df)
@@ -83,14 +83,14 @@ def main():
     # 1) Optimizer with weight decay
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=1e-5, 
-        weight_decay=1e-6
+        lr=1e-4, 
+        # weight_decay=1e-6
     )
 
     # 2) Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, 
-        max_lr=1e-5, 
+        max_lr=1e-4, 
         steps_per_epoch=len(train_loader),
         epochs=total_epochs
     )
