@@ -11,7 +11,7 @@ class ImuModel(nn.Module):
             nn.Conv1d(input_channels, channels, kernel_size=3, padding=1),
             nn.SiLU()
         )
-        self.channel_conv = nn.Sequential(
+        self.pointwise_conv = nn.Sequential(
             nn.Conv1d(input_channels, channels, kernel_size=1),
             nn.SiLU()
         )
@@ -28,12 +28,12 @@ class ImuModel(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        t_f = self.temporal_conv(x)  # (B, 16, L)
-        c_f = self.channel_conv(x)   # (B, 16, L)
+        temporal_f = self.temporal_conv(x)  # (B, 16, L)
+        point_f = self.pointwise_conv(x)   # (B, 16, L)
 
-        combined = torch.cat([t_f, c_f], dim=1)  # (B, 32, L)
+        combined = torch.cat([temporal_f, point_f], dim=1)  # (B, 32, L)
         gate = self.gate_layer(combined)        # (B, 16, L)
-        fused = gate * t_f + (1 - gate) * c_f   # (B, 16, L)
+        fused = gate * temporal_f + (1 - gate) * point_f   # (B, 16, L)
 
         x = self.pool(fused)                    # (B, 16, 1)
         x = x.view(x.size(0), -1)               # (B, 16)
