@@ -37,27 +37,31 @@ class IMUDataset(torch.utils.data.Dataset):
         return x, y
 
 if __name__ == "__main__":
-    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv")
-    imu_features = ['ax_imu', 'ay_imu', 'r_imu']
-    gt_features = ['ax_gt', 'ay_gt', 'r_gt']
+    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv", index_col=0)
+    # df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
+    
+    dataset = IMUDataset(df, seq_len=6)
+    # imu_features = ['ax_imu', 'ay_imu', 'r_imu']
+    # gt_features = ['ax_gt', 'ay_gt', 'r_gt']
 
-    # 평균과 표준편차 계산
-    imu_mean = df[imu_features].mean()
-    imu_std = df[imu_features].std()
-    gt_mean = df[gt_features].mean()
-    gt_std = df[gt_features].std()
+    # # 평균과 표준편차 계산
+    # imu_mean = df[imu_features].mean()
+    # imu_std = df[imu_features].std()
+    # gt_mean = df[gt_features].mean()
+    # gt_std = df[gt_features].std()
 
-    # 정규화 적용
-    df[imu_features] = (df[imu_features] - imu_mean) / imu_std
-    df[gt_features] = (df[gt_features] - gt_mean) / gt_std
+    # # 정규화 적용
+    # df[imu_features] = (df[imu_features] - imu_mean) / imu_std
+    # df[gt_features] = (df[gt_features] - gt_mean) / gt_std
 
-    # 정규화 파라미터 저장
-    norm_params = {
-        'imu_mean': imu_mean,
-        'imu_std': imu_std,
-        'gt_mean': gt_mean,
-        'gt_std': gt_std
-    }
-    joblib.dump(norm_params, 'normalization_params.pkl')
+    # # 정규화 파라미터 저장
+    # norm_params = {
+    #     'imu_mean': imu_mean,
+    #     'imu_std': imu_std,
+    #     'gt_mean': gt_mean,
+    #     'gt_std': gt_std
+    # }
+    # joblib.dump(norm_params, 'normalization_params.pkl')
 
-    # dataset = IMUDataset(df, seq_len=3)
+    # # dataset = IMUDataset(df, seq_len=3)
+    print ("Dataset length:", len(dataset))

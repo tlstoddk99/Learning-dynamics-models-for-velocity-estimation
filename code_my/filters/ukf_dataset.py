@@ -35,3 +35,10 @@ class UkfDataset(torch.utils.data.Dataset):
         x = torch.tensor(self.inputs[idx])  # shape: (seq_len, n_features)
         x_next = torch.tensor(self.targets[idx])  # shape: (n_features,)
         return x, x_next
+    
+    
+if __name__ == "__main__":
+    df = pd.read_csv("/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv", index_col=0)
+    # df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_train_and_val_gt.csv', index_col=0)
+    dataset = UkfDataset(df, seq_len=6, run_id_list=[4])
+    print(f"Dataset length: {len(dataset)}")

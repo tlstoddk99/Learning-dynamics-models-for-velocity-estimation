@@ -20,14 +20,18 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Paths and logging setup
 df = pd.read_csv('/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/dataset/hoons_all_test_gt.csv', index_col=0)
 
-start_idx = 0
+start_idx = 1900
 # Load the model state dict
 sensor_model_path = torch.load(
-    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-26_22-48/best_epoch_199_loss_1.5399.pt',
+    '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-29_22-00/best_epoch_3790_loss_1.2455.pt',
                               )
 dataset= UkfDataset(df,run_id_list=[4])
-# dataset = Subset(dataset, np.arange(start_idx, start_idx+100, 1))  
-test_dataloader= DataLoader(dataset, batch_size=1, shuffle=False)
+dataset_1 = Subset(dataset, np.arange(start_idx, start_idx+300, 1))
+# dataset_2 = Subset(dataset, np.arange(start_idx+100, start_idx+200, 1))
+# dataset_3 = Subset(dataset, np.arange(start_idx+200, start_idx+300, 1))  
+test_data_1= DataLoader(dataset_1, batch_size=1, shuffle=False)
+# test_data_2= DataLoader(dataset_2, batch_size=1, shuffle=False)
+# test_data_3= DataLoader(dataset_3, batch_size=1, shuffle=False)
 #  ['v_x', 'v_y', 'r', 'omega_wheels', 'friction', 'delta', 'Iq', 'ax_imu', 'ay_imu', 'r_imu']
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -129,71 +133,136 @@ def update(X_pred, P_pred, Z, R, u):
 
     return X_updated, P_updated
 
-results = []
-raw_infer_times = []
-infer_times = []
-count = 0
 
-vehicle_model.eval()
-sensor_model.eval()
+def run_ukf_on_data(test_loader):
+    results = []
+    raw_infer_times = []
+    infer_times = []
+    count = 0
 
-with torch.no_grad():
-    for x, x_next in test_dataloader:
-        x = x.to(device)  # (B, seq_len, 10)
-        x_next = x_next.to(device)  # (B,10)
+    with torch.no_grad():
+        for x, x_next in test_loader:
+            x = x.to(device)
+            x_next = x_next.to(device)
+
+            if count == 0:
+                x_hat = x[:, -1, :5]
+                x_hat_raw = x[:, -1, :5]
+                P = torch.diag(torch.tensor([1e-3]*4 + [1e-5], device=device)).unsqueeze(0)
+                P_raw = torch.diag(torch.tensor([1e-3]*4 + [1e-5], device=device)).unsqueeze(0)
+                Q = torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
+                R_raw = torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
+                R = torch.diag(torch.tensor([1e1, 2e1, 5e-1, 1e-1], device=device)).unsqueeze(0)
+            elif count % 100 == 0:
+                # Reset the state estimates and covariances every 100 iterations
+                x_hat = x[:, -1, :5]
+                x_hat_raw = x[:, -1, :5]
+                P = torch.diag(torch.tensor([1e-3]*4 + [1e-5], device=device)).unsqueeze(0)
+                P_raw = torch.diag(torch.tensor([1e-3]*4 + [1e-5], device=device)).unsqueeze(0)
+
+            wheel_speed = x[:, -1, 3].unsqueeze(-1)
+            u = x[:, -1, 5:7]
+            imu_raw = x[:, -1, 6:9]
+
+            # Raw sensor branch
+            time0 = time.time()
+            y_raw = torch.cat((imu_raw, wheel_speed), dim=-1)
+            x_hat_raw, P_raw = predict(x_hat_raw, P_raw, Q, u)
+            x_hat_raw, P_raw = update(x_hat_raw, P_raw, y_raw, R_raw, u)
+            time1 = time.time()
+
+            # Proposed model branch
+            imu_seq = x[:, :, -3:].permute(0, 2, 1)
+            time2 = time.time()
+            imu = sensor_model(imu_seq)
+            y = torch.cat((imu, wheel_speed), dim=-1)
+            x_hat, P = predict(x_hat, P, Q, u)
+            x_hat, P = update(x_hat, P, y, R, u)
+            time3 = time.time()
+
+            x_hat_np = x_hat.cpu().numpy().squeeze()
+            x_hat_raw_np = x_hat_raw.cpu().numpy().squeeze()
+            target_np = x_next.cpu().numpy().squeeze()
+
+            results.append({
+                'Raw Sensor': x_hat_raw_np,
+                'Proposed': x_hat_np,
+                'Error Raw Sensor': x_hat_raw_np - target_np[:5],
+                'Error Proposed': x_hat_np - target_np[:5],
+                'GT': target_np,
+            })
+
+            raw_infer_times.append(np.clip(time1 - time0, 0, 0.02))
+            infer_times.append(np.clip(time3 - time2, 0, 0.02))
+            count += 1
+
+    return results, raw_infer_times, infer_times
+
+# results = []
+# raw_infer_times = []
+# infer_times = []
+# count = 0
+
+# vehicle_model.eval()
+# sensor_model.eval()
+
+# with torch.no_grad():
+#     for x, x_next in test_data_1:
+#         x = x.to(device)  # (B, seq_len, 10)
+#         x_next = x_next.to(device)  # (B,10)
         
-        if count == 0:
-            x_hat = x[:,-1,:5] # (B, 5)
-            x_hat_raw = x[:,-1,:5] # (B, 5)
-            P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
-            P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
-            Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
-            R_raw=torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
-            R=torch.diag(torch.tensor([1e1, 2e1, 5e-1, 1e-1], device=device)).unsqueeze(0)
-        # elif count% 100 == 0:
-        #     x_hat = x[:,-1,:5]
-        #     x_hat_raw = x[:,-1,:5] 
-        #     P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
-        #     P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
+#         if count == 0:
+#             x_hat = x[:,-1,:5] # (B, 5)
+#             x_hat_raw = x[:,-1,:5] # (B, 5)
+#             P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
+#             P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
+#             Q= torch.diag(torch.tensor([1e-3, 1e-3, 1e-2, 1e-2, 1e-5], device=device)).unsqueeze(0)
+#             R_raw=torch.diag(torch.tensor([5e1, 5e1, 5e1, 1e-1], device=device)).unsqueeze(0)
+#             R=torch.diag(torch.tensor([1e1, 2e1, 5e-1, 1e-1], device=device)).unsqueeze(0)
+#         # elif count% 100 == 0:
+#         #     x_hat = x[:,-1,:5]
+#         #     x_hat_raw = x[:,-1,:5] 
+#         #     P= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5],device=device)).unsqueeze(0)
+#         #     P_raw= torch.diag(torch.tensor([1e-3, 1e-3, 1e-3, 1e-3, 1e-5], device=device)).unsqueeze(0)
 
 
-        wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
-        u= x[:, -1, 5:7] # (B, 2) 
+#         wheel_speed = x[:, -1, 3].unsqueeze(-1) # (B, 1)
+#         u= x[:, -1, 5:7] # (B, 2) 
         
-        imu_raw=x[:, -1, 6:9]  # (B, 3)
-        time0 = time.time()
-        y_raw = torch.cat((imu_raw, wheel_speed), dim=-1) # (B, 4)
-        x_hat_raw, P_raw = predict(x_hat_raw, P_raw, Q, u)
-        x_hat_raw, P_raw = update(x_hat_raw, P_raw, y_raw, R_raw, u)
-        time1 = time.time()
+#         imu_raw=x[:, -1, 6:9]  # (B, 3)
+#         time0 = time.time()
+#         y_raw = torch.cat((imu_raw, wheel_speed), dim=-1) # (B, 4)
+#         x_hat_raw, P_raw = predict(x_hat_raw, P_raw, Q, u)
+#         x_hat_raw, P_raw = update(x_hat_raw, P_raw, y_raw, R_raw, u)
+#         time1 = time.time()
         
         
-        imu_seq = x[:, :, -3:].permute(0, 2, 1)  # (B, 3, seq_len)
-        time2 = time.time()
-        imu=sensor_model(imu_seq)  # (B, 3)
-        y = torch.cat((imu, wheel_speed), dim=-1) # (B, 4)
-        x_hat, P = predict(x_hat, P, Q, u)
-        x_hat, P = update(x_hat, P, y, R, u)
-        time3 = time.time()
+#         imu_seq = x[:, :, -3:].permute(0, 2, 1)  # (B, 3, seq_len)
+#         time2 = time.time()
+#         imu=sensor_model(imu_seq)  # (B, 3)
+#         y = torch.cat((imu, wheel_speed), dim=-1) # (B, 4)
+#         x_hat, P = predict(x_hat, P, Q, u)
+#         x_hat, P = update(x_hat, P, y, R, u)
+#         time3 = time.time()
         
-        x_hat_np = x_hat.cpu().numpy().squeeze()
-        x_hat_raw_np = x_hat_raw.cpu().numpy().squeeze()
-        target_np = x_next.cpu().numpy().squeeze()
+#         x_hat_np = x_hat.cpu().numpy().squeeze()
+#         x_hat_raw_np = x_hat_raw.cpu().numpy().squeeze()
+#         target_np = x_next.cpu().numpy().squeeze()
         
-        results.append({
-            'Raw Sensor': x_hat_raw_np,
-            'Proposed': x_hat_np,
-            'Error Raw Sensor': x_hat_raw_np - target_np[:5],
-            'Error Proposed': x_hat_np - target_np[:5],
-            'GT': target_np,
-        })
+#         results.append({
+#             'Raw Sensor': x_hat_raw_np,
+#             'Proposed': x_hat_np,
+#             'Error Raw Sensor': x_hat_raw_np - target_np[:5],
+#             'Error Proposed': x_hat_np - target_np[:5],
+#             'GT': target_np,
+#         })
 
 
-        raw_infer_time = np.clip(time1 - time0, 0, 0.02)
-        infer_time = np.clip(time3 - time2, 0, 0.02)  
-        raw_infer_times.append(raw_infer_time)
-        infer_times.append(infer_time)
-        count += 1
+#         raw_infer_time = np.clip(time1 - time0, 0, 0.02)
+#         infer_time = np.clip(time3 - time2, 0, 0.02)  
+#         raw_infer_times.append(raw_infer_time)
+#         infer_times.append(infer_time)
+#         count += 1
 
 
 def compute_ATE(positions_est, positions_gt):
@@ -207,6 +276,10 @@ def compute_ARE(yaws_est, yaws_gt):
     are_rmse = np.sqrt(np.mean(yaw_errors**2))
     return are_rmse
 
+results_1, raw_infer_times_1, infer_times_1 = run_ukf_on_data(test_data_1)
+# results_2, raw_infer_times_2, infer_times_2 = run_ukf_on_data(test_data_2)
+# results_3, raw_infer_times_3, infer_times_3 = run_ukf_on_data(test_data_3)
+
 
 
 # 초기값
@@ -214,7 +287,7 @@ x_init, y_init, yaw_init = 0.0, 0.0, 1.5
 dt = 0.01
 
 # 시간 생성
-times = np.arange(0, len(results) * dt, dt).tolist()
+times = np.arange(0, len(results_1) * dt, dt).tolist()
 
 def compute_trajectory(results, key):
     x, y, yaw = x_init, y_init, yaw_init
@@ -239,21 +312,111 @@ def compute_trajectory(results, key):
     return np.array(positions), yaws
 
 # 세 궤적 계산
-positions_proposed, yaws_proposed = compute_trajectory(results, 'Proposed')
-positions_raw, yaws_raw = compute_trajectory(results, 'Raw Sensor')
-positions_gt, yaws_gt = compute_trajectory(results, 'GT')
+# positions_proposed, yaws_proposed = compute_trajectory(results_1, 'Proposed')
+# positions_raw, yaws_raw = compute_trajectory(results_1, 'Raw Sensor')
+# positions_gt, yaws_gt = compute_trajectory(results_1, 'GT')
+
+positions_proposed_1, yaws_proposed_1 = compute_trajectory(results_1, 'Proposed')
+positions_raw_1, yaws_raw_1 = compute_trajectory(results_1, 'Raw Sensor')
+positions_gt_1, yaws_gt_1 = compute_trajectory(results_1, 'GT')
+# positions_proposed_2, yaws_proposed_2 = compute_trajectory(results_2, 'Proposed')
+# positions_raw_2, yaws_raw_2 = compute_trajectory(results_2, 'Raw Sensor')
+# positions_gt_2, yaws_gt_2 = compute_trajectory(results_2, 'GT')
+# positions_proposed_3, yaws_proposed_3 = compute_trajectory(results_3, 'Proposed')
+# positions_raw_3, yaws_raw_3 = compute_trajectory(results_3, 'Raw Sensor')
+# positions_gt_3, yaws_gt_3 = compute_trajectory(results_3, 'GT')
+
+
+# # ATE 및 ARE 계산
+# ate_proposed = compute_ATE(positions_proposed, positions_gt)
+# are_proposed = compute_ARE(yaws_proposed, yaws_gt)
+# ate_raw = compute_ATE(positions_raw, positions_gt)
+# are_raw = compute_ARE(yaws_raw, yaws_gt)
+# print(f'ATE Proposed: {ate_proposed:.3f} m, ARE Proposed: {np.degrees(are_proposed):.3f} deg')
+# print(f'ATE Raw: {ate_raw:.3f} m, ARE Raw: {np.degrees(are_raw):.3f} deg')
+# print(f'ATE Improvement: {100 * (ate_raw - ate_proposed) / ate_raw:.2f}%, ARE Improvement: {100 * (are_raw - are_proposed) / are_raw:.2f}%')
+# print(f'Inference Time - Proposed: {np.mean(infer_times_1):.4f} s, Raw Sensor: {np.mean(raw_infer_times_1):.4f} s')
+# print(f'Length of dataset: {len(results_1)}')
 
 # ATE 및 ARE 계산
-ate_proposed = compute_ATE(positions_proposed, positions_gt)
-are_proposed = compute_ARE(yaws_proposed, yaws_gt)
-ate_raw = compute_ATE(positions_raw, positions_gt)
-are_raw = compute_ARE(yaws_raw, yaws_gt)
-print(f'ATE Proposed: {ate_proposed:.3f} m, ARE Proposed: {np.degrees(are_proposed):.3f} deg')
-print(f'ATE Raw: {ate_raw:.3f} m, ARE Raw: {np.degrees(are_raw):.3f} deg')
-print(f'ATE Improvement: {100 * (ate_raw - ate_proposed) / ate_raw:.2f}%, ARE Improvement: {100 * (are_raw - are_proposed) / are_raw:.2f}%')
-print(f'Inference Time - Proposed: {np.mean(infer_times):.4f} s, Raw Sensor: {np.mean(raw_infer_times):.4f} s')
-print(f'Length of dataset: {len(results)}')
+ate_proposed_1 = compute_ATE(positions_proposed_1, positions_gt_1)
+are_proposed_1 = compute_ARE(yaws_proposed_1, yaws_gt_1)
+ate_raw_1 = compute_ATE(positions_raw_1, positions_gt_1)
+are_raw_1 = compute_ARE(yaws_raw_1, yaws_gt_1)
+# ate_proposed_2 = compute_ATE(positions_proposed_2, positions_gt_2)
+# are_proposed_2 = compute_ARE(yaws_proposed_2, yaws_gt_2)
+# ate_raw_2 = compute_ATE(positions_raw_2, positions_gt_2)
+# are_raw_2 = compute_ARE(yaws_raw_2, yaws_gt_2)
+# ate_proposed_3 = compute_ATE(positions_proposed_3, positions_gt_3)
+# are_proposed_3 = compute_ARE(yaws_proposed_3, yaws_gt_3)
+# ate_raw_3 = compute_ATE(positions_raw_3, positions_gt_3)
+# are_raw_3 = compute_ARE(yaws_raw_3, yaws_gt_3)
+print(f'ATE Proposed Subset 1: {ate_proposed_1:.3f} m, ARE Proposed Subset 1: {np.degrees(are_proposed_1):.3f} deg')
+print(f'ATE Raw Subset 1: {ate_raw_1:.3f} m, ARE Raw Subset 1: {np.degrees(are_raw_1):.3f} deg')
+print(f'ATE Improvement Subset 1: {100 * (ate_raw_1 - ate_proposed_1) / ate_raw_1:.2f}%, ARE Improvement Subset 1: {100 * (are_raw_1 - are_proposed_1) / are_raw_1:.2f}%')
+# print(f'ATE Proposed Subset 2: {ate_proposed_2:.3f} m, ARE Proposed Subset 2: {np.degrees(are_proposed_2):.3f} deg')
+# print(f'ATE Raw Subset 2: {ate_raw_2:.3f} m, ARE Raw Subset 2: {np.degrees(are_raw_2):.3f} deg')
+# print(f'ATE Improvement Subset 2: {100 * (ate_raw_2 - ate_proposed_2) / ate_raw_2:.2f}%, ARE Improvement Subset 2: {100 * (are_raw_2 - are_proposed_2) / are_raw_2:.2f}%')
+# print(f'ATE Proposed Subset 3: {ate_proposed_3:.3f} m, ARE Proposed Subset 3: {np.degrees(are_proposed_3):.3f} deg')
+# print(f'ATE Raw Subset 3: {ate_raw_3:.3f} m, ARE Raw Subset 3: {np.degrees(are_raw_3):.3f} deg')
+# print(f'ATE Improvement Subset 3: {100 * (ate_raw_3 - ate_proposed_3) / ate_raw_3:.2f}%, ARE Improvement Subset 3: {100 * (are_raw_3 - are_proposed_3) / are_raw_3:.2f}%')
+print(f'Inference Time - Proposed Subset 1: {np.mean(infer_times_1):.4f} s, Raw Sensor Subset 1: {np.mean(raw_infer_times_1):.4f} s')
+# print(f'Inference Time - Proposed Subset 2: {np.mean(infer_times_2):.4f} s, Raw Sensor Subset 2: {np.mean(raw_infer_times_2):.4f} s')
+# print(f'Inference Time - Proposed Subset 3: {np.mean(infer_times_3):.4f} s, Raw Sensor Subset 3: {np.mean(raw_infer_times_3):.4f} s')
+# # 궤적 플로팅
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
+datasets = [
+    (positions_gt_1, positions_raw_1, positions_proposed_1, yaws_gt_1, yaws_raw_1, yaws_proposed_1, 'Subset 1'),
+    # (positions_gt_2, positions_raw_2, positions_proposed_2, yaws_gt_2, yaws_raw_2, yaws_proposed_2, 'Subset 2'),
+    # (positions_gt_3, positions_raw_3, positions_proposed_3, yaws_gt_3, yaws_raw_3, yaws_proposed_3, 'Subset 3'),
+]
+
+# 화살표 그리는 함수
+arrow_interval = int(0.2 / dt)  # 화살표 간격 설정 (0.2초마다 화살표)
+
+
+def draw_arrows(ax, positions, yaws, color):
+    for i in range(0, len(positions), arrow_interval):
+        px, py = positions[i]
+        yaw_i = yaws[i]
+        arrow_dx = np.cos(yaw_i) * 0.1
+        arrow_dy = np.sin(yaw_i) * 0.1
+        ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+all_positions = np.vstack([
+    item[0] for item in datasets  # positions_gt
+] + [
+    item[1] for item in datasets  # positions_raw
+] + [
+    item[2] for item in datasets  # positions_proposed
+])
+
+x_min, x_max = np.min(all_positions[:, 0]), np.max(all_positions[:, 0])
+y_min, y_max = np.min(all_positions[:, 1]), np.max(all_positions[:, 1])
+for ax, (positions_gt, positions_raw, positions_proposed, yaws_gt, yaws_raw, yaws_proposed, title) in zip(axes, datasets):
+    ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=10, alpha=0.6, color='black')
+    ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=10, alpha=0.6, color='C0')
+    ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=10, alpha=0.6, color='red')
+
+    draw_arrows(ax, positions_gt, yaws_gt, 'black')
+    draw_arrows(ax, positions_raw, yaws_raw, 'C0')
+    draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
+
+    ax.set_title(title)
+    ax.set_xlabel('X position [m]')
+    ax.set_ylabel('Y position [m]')
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlim(x_min - 0.2, x_max + 0.2)
+    ax.set_ylim(y_min - 0.2, y_max + 0.4)
+    ax.grid(alpha=0.7)
+    ax.legend()
+    
+
+
+plt.tight_layout()
+save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/comparison_{start_idx}.png'
+plt.savefig(save_path, dpi=600, bbox_inches='tight')
+plt.show()
 
 # # 궤적 플로팅
 # fig, ax = plt.subplots()
