@@ -14,6 +14,7 @@ from robot_models.pacejka import PacejkaTireModel
 from robot_models.single_track_parameters import SingleTrackParameters
 from sensor_models.imu_model import ImuModel
 from torch.utils.data import Subset
+from matplotlib.ticker import MultipleLocator
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -26,12 +27,13 @@ sensor_model_path = torch.load(
     '/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/trained_models/05-29_22-00/best_epoch_3790_loss_1.2455.pt',
                               )
 dataset= UkfDataset(df,run_id_list=[4])
-dataset_1 = Subset(dataset, np.arange(start_idx, start_idx+300, 1))
-# dataset_2 = Subset(dataset, np.arange(start_idx+100, start_idx+200, 1))
+dataset_1 = Subset(dataset, np.arange(start_idx, start_idx+100, 1))
+dataset_2 = Subset(dataset, np.arange(start_idx+100, start_idx+200, 1))
 # dataset_3 = Subset(dataset, np.arange(start_idx+200, start_idx+300, 1))  
+dataset_3 = Subset(dataset, np.arange(start_idx+1300, start_idx+1400, 1))
 test_data_1= DataLoader(dataset_1, batch_size=1, shuffle=False)
-# test_data_2= DataLoader(dataset_2, batch_size=1, shuffle=False)
-# test_data_3= DataLoader(dataset_3, batch_size=1, shuffle=False)
+test_data_2= DataLoader(dataset_2, batch_size=1, shuffle=False)
+test_data_3= DataLoader(dataset_3, batch_size=1, shuffle=False)
 #  ['v_x', 'v_y', 'r', 'omega_wheels', 'friction', 'delta', 'Iq', 'ax_imu', 'ay_imu', 'r_imu']
 timestamp = time.strftime('%m-%d_%H-%M')
 
@@ -277,19 +279,14 @@ def compute_ARE(yaws_est, yaws_gt):
     return are_rmse
 
 results_1, raw_infer_times_1, infer_times_1 = run_ukf_on_data(test_data_1)
-# results_2, raw_infer_times_2, infer_times_2 = run_ukf_on_data(test_data_2)
-# results_3, raw_infer_times_3, infer_times_3 = run_ukf_on_data(test_data_3)
+results_2, raw_infer_times_2, infer_times_2 = run_ukf_on_data(test_data_2)
+results_3, raw_infer_times_3, infer_times_3 = run_ukf_on_data(test_data_3)
 
 
 
-# 초기값
-x_init, y_init, yaw_init = 0.0, 0.0, 1.5
-dt = 0.01
 
-# 시간 생성
-times = np.arange(0, len(results_1) * dt, dt).tolist()
 
-def compute_trajectory(results, key):
+def compute_trajectory(results, key, x_init, y_init, yaw_init, dt=0.01):
     x, y, yaw = x_init, y_init, yaw_init
     positions = [(x, y)]
     yaws = [yaw]
@@ -311,65 +308,68 @@ def compute_trajectory(results, key):
 
     return np.array(positions), yaws
 
-# 세 궤적 계산
-# positions_proposed, yaws_proposed = compute_trajectory(results_1, 'Proposed')
-# positions_raw, yaws_raw = compute_trajectory(results_1, 'Raw Sensor')
-# positions_gt, yaws_gt = compute_trajectory(results_1, 'GT')
+# 초기값
+x_init, y_init, yaw_init = 0.0, 0.0, 0.8
+dt = 0.01
 
-positions_proposed_1, yaws_proposed_1 = compute_trajectory(results_1, 'Proposed')
-positions_raw_1, yaws_raw_1 = compute_trajectory(results_1, 'Raw Sensor')
-positions_gt_1, yaws_gt_1 = compute_trajectory(results_1, 'GT')
-# positions_proposed_2, yaws_proposed_2 = compute_trajectory(results_2, 'Proposed')
-# positions_raw_2, yaws_raw_2 = compute_trajectory(results_2, 'Raw Sensor')
-# positions_gt_2, yaws_gt_2 = compute_trajectory(results_2, 'GT')
-# positions_proposed_3, yaws_proposed_3 = compute_trajectory(results_3, 'Proposed')
-# positions_raw_3, yaws_raw_3 = compute_trajectory(results_3, 'Raw Sensor')
-# positions_gt_3, yaws_gt_3 = compute_trajectory(results_3, 'GT')
+# 시간 생성
+times = np.arange(0, len(results_1) * dt, dt).tolist()
 
+# positions_proposed_1, yaws_proposed_1 = compute_trajectory(results_1, 'Proposed', x_init, y_init, yaw_init)
+# positions_raw_1, yaws_raw_1 = compute_trajectory(results_1, 'Raw Sensor', x_init, y_init, yaw_init)
+# positions_gt_1, yaws_gt_1 = compute_trajectory(results_1, 'GT', x_init, y_init, yaw_init)
+# positions_proposed_2, yaws_proposed_2 = compute_trajectory(results_2, 'Proposed', positions_gt_1[-1, 0], positions_gt_1[-1, 1], yaws_gt_1[-1])
+# positions_raw_2, yaws_raw_2 = compute_trajectory(results_2, 'Raw Sensor', positions_gt_1[-1, 0], positions_gt_1[-1, 1], yaws_gt_1[-1])
+# positions_gt_2, yaws_gt_2 = compute_trajectory(results_2, 'GT', positions_gt_1[-1, 0], positions_gt_1[-1, 1], yaws_gt_1[-1])
+# positions_proposed_3, yaws_proposed_3 = compute_trajectory(results_3, 'Proposed', positions_gt_2[-1, 0], positions_gt_2[-1, 1], yaws_gt_2[-1])
+# positions_raw_3, yaws_raw_3 = compute_trajectory(results_3, 'Raw Sensor', positions_gt_2[-1, 0], positions_gt_2[-1, 1], yaws_gt_2[-1])
+# positions_gt_3, yaws_gt_3 = compute_trajectory(results_3, 'GT', positions_gt_2[-1, 0], positions_gt_2[-1, 1], yaws_gt_2[-1])
 
-# # ATE 및 ARE 계산
-# ate_proposed = compute_ATE(positions_proposed, positions_gt)
-# are_proposed = compute_ARE(yaws_proposed, yaws_gt)
-# ate_raw = compute_ATE(positions_raw, positions_gt)
-# are_raw = compute_ARE(yaws_raw, yaws_gt)
-# print(f'ATE Proposed: {ate_proposed:.3f} m, ARE Proposed: {np.degrees(are_proposed):.3f} deg')
-# print(f'ATE Raw: {ate_raw:.3f} m, ARE Raw: {np.degrees(are_raw):.3f} deg')
-# print(f'ATE Improvement: {100 * (ate_raw - ate_proposed) / ate_raw:.2f}%, ARE Improvement: {100 * (are_raw - are_proposed) / are_raw:.2f}%')
-# print(f'Inference Time - Proposed: {np.mean(infer_times_1):.4f} s, Raw Sensor: {np.mean(raw_infer_times_1):.4f} s')
-# print(f'Length of dataset: {len(results_1)}')
+positions_proposed_1, yaws_proposed_1 = compute_trajectory(results_1, 'Proposed', x_init, y_init, yaw_init, dt)
+positions_raw_1, yaws_raw_1 = compute_trajectory(results_1, 'Raw Sensor', x_init, y_init, yaw_init, dt)
+positions_gt_1, yaws_gt_1 = compute_trajectory(results_1, 'GT', x_init, y_init, yaw_init, dt)
+yaw_init_1=0.5
+positions_proposed_2, yaws_proposed_2 = compute_trajectory(results_2, 'Proposed', x_init, y_init, yaw_init_1, dt)
+positions_raw_2, yaws_raw_2 = compute_trajectory(results_2, 'Raw Sensor', x_init, y_init, yaw_init_1, dt)
+positions_gt_2, yaws_gt_2 = compute_trajectory(results_2, 'GT', x_init, y_init, yaw_init_1, dt)
+yaw_init_2=-0.9
+positions_proposed_3, yaws_proposed_3 = compute_trajectory(results_3, 'Proposed', x_init, y_init, yaw_init_2, dt)
+positions_raw_3, yaws_raw_3 = compute_trajectory(results_3, 'Raw Sensor', x_init, y_init, yaw_init_2, dt)
+positions_gt_3, yaws_gt_3 = compute_trajectory(results_3, 'GT', x_init, y_init, yaw_init_2, dt)
+
 
 # ATE 및 ARE 계산
 ate_proposed_1 = compute_ATE(positions_proposed_1, positions_gt_1)
 are_proposed_1 = compute_ARE(yaws_proposed_1, yaws_gt_1)
 ate_raw_1 = compute_ATE(positions_raw_1, positions_gt_1)
 are_raw_1 = compute_ARE(yaws_raw_1, yaws_gt_1)
-# ate_proposed_2 = compute_ATE(positions_proposed_2, positions_gt_2)
-# are_proposed_2 = compute_ARE(yaws_proposed_2, yaws_gt_2)
-# ate_raw_2 = compute_ATE(positions_raw_2, positions_gt_2)
-# are_raw_2 = compute_ARE(yaws_raw_2, yaws_gt_2)
-# ate_proposed_3 = compute_ATE(positions_proposed_3, positions_gt_3)
-# are_proposed_3 = compute_ARE(yaws_proposed_3, yaws_gt_3)
-# ate_raw_3 = compute_ATE(positions_raw_3, positions_gt_3)
-# are_raw_3 = compute_ARE(yaws_raw_3, yaws_gt_3)
+ate_proposed_2 = compute_ATE(positions_proposed_2, positions_gt_2)
+are_proposed_2 = compute_ARE(yaws_proposed_2, yaws_gt_2)
+ate_raw_2 = compute_ATE(positions_raw_2, positions_gt_2)
+are_raw_2 = compute_ARE(yaws_raw_2, yaws_gt_2)
+ate_proposed_3 = compute_ATE(positions_proposed_3, positions_gt_3)
+are_proposed_3 = compute_ARE(yaws_proposed_3, yaws_gt_3)
+ate_raw_3 = compute_ATE(positions_raw_3, positions_gt_3)
+are_raw_3 = compute_ARE(yaws_raw_3, yaws_gt_3)
 print(f'ATE Proposed Subset 1: {ate_proposed_1:.3f} m, ARE Proposed Subset 1: {np.degrees(are_proposed_1):.3f} deg')
 print(f'ATE Raw Subset 1: {ate_raw_1:.3f} m, ARE Raw Subset 1: {np.degrees(are_raw_1):.3f} deg')
 print(f'ATE Improvement Subset 1: {100 * (ate_raw_1 - ate_proposed_1) / ate_raw_1:.2f}%, ARE Improvement Subset 1: {100 * (are_raw_1 - are_proposed_1) / are_raw_1:.2f}%')
-# print(f'ATE Proposed Subset 2: {ate_proposed_2:.3f} m, ARE Proposed Subset 2: {np.degrees(are_proposed_2):.3f} deg')
-# print(f'ATE Raw Subset 2: {ate_raw_2:.3f} m, ARE Raw Subset 2: {np.degrees(are_raw_2):.3f} deg')
-# print(f'ATE Improvement Subset 2: {100 * (ate_raw_2 - ate_proposed_2) / ate_raw_2:.2f}%, ARE Improvement Subset 2: {100 * (are_raw_2 - are_proposed_2) / are_raw_2:.2f}%')
-# print(f'ATE Proposed Subset 3: {ate_proposed_3:.3f} m, ARE Proposed Subset 3: {np.degrees(are_proposed_3):.3f} deg')
-# print(f'ATE Raw Subset 3: {ate_raw_3:.3f} m, ARE Raw Subset 3: {np.degrees(are_raw_3):.3f} deg')
-# print(f'ATE Improvement Subset 3: {100 * (ate_raw_3 - ate_proposed_3) / ate_raw_3:.2f}%, ARE Improvement Subset 3: {100 * (are_raw_3 - are_proposed_3) / are_raw_3:.2f}%')
-print(f'Inference Time - Proposed Subset 1: {np.mean(infer_times_1):.4f} s, Raw Sensor Subset 1: {np.mean(raw_infer_times_1):.4f} s')
+print(f'ATE Proposed Subset 2: {ate_proposed_2:.3f} m, ARE Proposed Subset 2: {np.degrees(are_proposed_2):.3f} deg')
+print(f'ATE Raw Subset 2: {ate_raw_2:.3f} m, ARE Raw Subset 2: {np.degrees(are_raw_2):.3f} deg')
+print(f'ATE Improvement Subset 2: {100 * (ate_raw_2 - ate_proposed_2) / ate_raw_2:.2f}%, ARE Improvement Subset 2: {100 * (are_raw_2 - are_proposed_2) / are_raw_2:.2f}%')
+print(f'ATE Proposed Subset 3: {ate_proposed_3:.3f} m, ARE Proposed Subset 3: {np.degrees(are_proposed_3):.3f} deg')
+print(f'ATE Raw Subset 3: {ate_raw_3:.3f} m, ARE Raw Subset 3: {np.degrees(are_raw_3):.3f} deg')
+print(f'ATE Improvement Subset 3: {100 * (ate_raw_3 - ate_proposed_3) / ate_raw_3:.2f}%, ARE Improvement Subset 3: {100 * (are_raw_3 - are_proposed_3) / are_raw_3:.2f}%')
+# print(f'Inference Time - Proposed Subset 1: {np.mean(infer_times_1):.4f} s, Raw Sensor Subset 1: {np.mean(raw_infer_times_1):.4f} s')
 # print(f'Inference Time - Proposed Subset 2: {np.mean(infer_times_2):.4f} s, Raw Sensor Subset 2: {np.mean(raw_infer_times_2):.4f} s')
 # print(f'Inference Time - Proposed Subset 3: {np.mean(infer_times_3):.4f} s, Raw Sensor Subset 3: {np.mean(raw_infer_times_3):.4f} s')
-# # 궤적 플로팅
+# # # 궤적 플로팅
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
 datasets = [
-    (positions_gt_1, positions_raw_1, positions_proposed_1, yaws_gt_1, yaws_raw_1, yaws_proposed_1, 'Subset 1'),
-    # (positions_gt_2, positions_raw_2, positions_proposed_2, yaws_gt_2, yaws_raw_2, yaws_proposed_2, 'Subset 2'),
-    # (positions_gt_3, positions_raw_3, positions_proposed_3, yaws_gt_3, yaws_raw_3, yaws_proposed_3, 'Subset 3'),
+    (positions_gt_1, positions_raw_1, positions_proposed_1, yaws_gt_1, yaws_raw_1, yaws_proposed_1, 'Scene 1'),
+    (positions_gt_2, positions_raw_2, positions_proposed_2, yaws_gt_2, yaws_raw_2, yaws_proposed_2, 'Scene 2'),
+    (positions_gt_3, positions_raw_3, positions_proposed_3, yaws_gt_3, yaws_raw_3, yaws_proposed_3, 'Scene 3'),
 ]
 
 # 화살표 그리는 함수
@@ -382,7 +382,16 @@ def draw_arrows(ax, positions, yaws, color):
         yaw_i = yaws[i]
         arrow_dx = np.cos(yaw_i) * 0.1
         arrow_dy = np.sin(yaw_i) * 0.1
-        ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+        ax.arrow(
+                px - arrow_dx / 2,  # 중앙 정렬
+                py - arrow_dy / 2,
+                arrow_dx,
+                arrow_dy,
+                head_width=0.1,
+                head_length=0.1,
+                width=0.04,
+                color=color
+            )
 all_positions = np.vstack([
     item[0] for item in datasets  # positions_gt
 ] + [
@@ -393,10 +402,15 @@ all_positions = np.vstack([
 
 x_min, x_max = np.min(all_positions[:, 0]), np.max(all_positions[:, 0])
 y_min, y_max = np.min(all_positions[:, 1]), np.max(all_positions[:, 1])
-for ax, (positions_gt, positions_raw, positions_proposed, yaws_gt, yaws_raw, yaws_proposed, title) in zip(axes, datasets):
-    ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=10, alpha=0.6, color='black')
-    ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=10, alpha=0.6, color='C0')
-    ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=10, alpha=0.6, color='red')
+linewidth = 4
+for i,(ax, (positions_gt, positions_raw, positions_proposed, yaws_gt, yaws_raw, yaws_proposed, title)) in enumerate(zip(axes, datasets)):
+    show_label = (i == 0) 
+    ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth' if show_label else None,
+            linewidth=4, alpha=0.8, color='black')
+    ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Only UKF' if show_label else None,
+            linewidth=linewidth, alpha=0.7, color='C0')
+    ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Net + UKF' if show_label else None,
+            linewidth=linewidth, alpha=0.7, color='red')
 
     draw_arrows(ax, positions_gt, yaws_gt, 'black')
     draw_arrows(ax, positions_raw, yaws_raw, 'C0')
@@ -406,12 +420,17 @@ for ax, (positions_gt, positions_raw, positions_proposed, yaws_gt, yaws_raw, yaw
     ax.set_xlabel('X position [m]')
     ax.set_ylabel('Y position [m]')
     ax.set_aspect('equal', adjustable='box')
-    ax.set_xlim(x_min - 0.2, x_max + 0.2)
-    ax.set_ylim(y_min - 0.2, y_max + 0.4)
-    ax.grid(alpha=0.7)
-    ax.legend()
+    ax.set_xlim(x_min - 0.1, x_max + 0.1)
+    ax.set_ylim(y_min - 0.2, y_max + 0.2)
+    # ax.grid(alpha=0.7)
     
-
+    # 1m 간격 그리드 설정
+    ax.xaxis.set_major_locator(MultipleLocator(1))
+    ax.yaxis.set_major_locator(MultipleLocator(1))
+    ax.grid(True, which='major', alpha=0.7)
+    # ax.legend()
+    
+fig.legend(loc='upper center', bbox_to_anchor=(0.51, 0.97), ncol=3, fontsize=18)
 
 plt.tight_layout()
 save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/comparison_{start_idx}.png'
@@ -419,10 +438,18 @@ plt.savefig(save_path, dpi=600, bbox_inches='tight')
 plt.show()
 
 # # 궤적 플로팅
+# positions_gt = np.vstack([positions_gt_1, positions_gt_2, positions_gt_3])
+# yaws_gt = np.hstack([yaws_gt_1, yaws_gt_2, yaws_gt_3])
+# gt_linewidth = 2
+# linewidth = 3
 # fig, ax = plt.subplots()
-# ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=4, alpha=0.7, color='black')
-# ax.plot(positions_raw[:, 0], positions_raw[:, 1], label='Raw Sensor', linewidth=4, alpha=0.7, color='C0')
-# ax.plot(positions_proposed[:, 0], positions_proposed[:, 1], label='Proposed', linewidth=4, alpha=0.7, color='red')
+# ax.plot(positions_gt[:, 0], positions_gt[:, 1], label='Ground Truth', linewidth=gt_linewidth, alpha=0.8, color='black')
+# ax.plot(positions_proposed_1[:, 0], positions_proposed_1[:, 1], label='Proposed', linewidth=linewidth, alpha=0.5, color='red')
+# ax.plot(positions_proposed_2[:, 0], positions_proposed_2[:, 1], linewidth=linewidth, alpha=0.5, color='red')
+# ax.plot(positions_proposed_3[:, 0], positions_proposed_3[:, 1], linewidth=linewidth, alpha=0.5, color='red')
+# ax.plot(positions_raw_1[:, 0], positions_raw_1[:, 1], label='Raw Sensor', linewidth=linewidth, alpha=0.5, color='C0')
+# ax.plot(positions_raw_2[:, 0], positions_raw_2[:, 1], linewidth=linewidth, alpha=0.5, color='C0')
+# ax.plot(positions_raw_3[:, 0], positions_raw_3[:, 1], linewidth=linewidth, alpha=0.5, color='C0')
 
 # arrow_interval = int(0.2 / dt)
 
@@ -431,14 +458,18 @@ plt.show()
 #     for i in range(0, len(positions), arrow_interval):
 #         px, py = positions[i]
 #         yaw_i = yaws[i]
-#         arrow_dx = np.cos(yaw_i) * 0.1
-#         arrow_dy = np.sin(yaw_i) * 0.1
-#         ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.1, head_length=0.1, width=0.04, color=color)
+#         arrow_dx = np.cos(yaw_i) * 0.05
+#         arrow_dy = np.sin(yaw_i) * 0.05
+#         ax.arrow(px, py, arrow_dx, arrow_dy, head_width=0.05, head_length=0.05, width=0.02, color=color)
 
 # # 각 궤적에 화살표 추가
 # draw_arrows(ax, positions_gt, yaws_gt, 'black')
-# draw_arrows(ax, positions_raw, yaws_raw, 'C0')
-# draw_arrows(ax, positions_proposed, yaws_proposed, 'red')
+# draw_arrows(ax, positions_raw_1, yaws_raw_1, 'C0')
+# draw_arrows(ax, positions_proposed_1, yaws_proposed_1, 'red')
+# draw_arrows(ax, positions_raw_2, yaws_raw_2, 'C0')
+# draw_arrows(ax, positions_proposed_2, yaws_proposed_2, 'red')
+# draw_arrows(ax, positions_raw_3, yaws_raw_3, 'C0')
+# draw_arrows(ax, positions_proposed_3, yaws_proposed_3, 'red')
 
 # # 그래프 꾸미기
 # ax.set_xlabel('X position [m]')
@@ -446,9 +477,10 @@ plt.show()
 # ax.grid(alpha=0.7)
 # ax.set_aspect('equal', adjustable='box')
 # ax.axis('equal')
-# ax.legend()
-# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}.png'
-# plt.savefig(save_path, dpi=300, bbox_inches='tight')
+# # ax.legend()
+# ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=3, fontsize=10)
+# save_path = f'/home/a/Learning-dynamics-models-for-velocity-estimation/code_my/plots/ukf_pose/{start_idx}_plus.png'
+# plt.savefig(save_path, dpi=600, bbox_inches='tight')
 # plt.show()
 
 
